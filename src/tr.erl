@@ -6,11 +6,11 @@
 
 -record(tr, {pid, event, mfarity, data, ts}).
 
-mem_usage() ->
-    Ps = processes(),
-    Stat = [{F, Mem, Count, Mem * Count}
-            || {{F, Mem}, Count} <- maps:to_list(stat(Ps, fun mem_usage_key/1))],
-    lists:reverse(lists:keysort(4, Stat)).
+%% mem_usage() ->
+%%     Ps = processes(),
+%%     Stat = [{F, Mem, Count, Mem * Count}
+%%             || {{F, Mem}, Count} <- maps:to_list(stat(Ps, fun mem_usage_key/1))],
+%%     lists:reverse(lists:keysort(4, Stat)).
 
 mem_usage_key(Pid) ->
     list_to_tuple([element(2, process_info(Pid, Attr)) || Attr <- key_attrs()]).
@@ -24,14 +24,17 @@ trace_calls(Modules) ->
 stop_tracing_calls() ->
     gen_server:call(?MODULE, {stop_trace, call}).
 
-called_functions() ->
-    ets_stat(trace, fun({_Pid, call, MFA, _TS}) -> mfarity(MFA) end).
+clean() ->
+    gen_server:call(?MODULE, clean).
 
-calling_pids() ->
-    ets_stat(trace, fun({Pid, call, _MFA, _TS}) -> Pid end).
+%% called_functions() ->
+%%     ets_stat(trace, fun({_Pid, call, MFA, _TS}) -> mfarity(MFA) end).
 
-calls() ->
-    ets_stat(trace, fun({Pid, call, MFA, _TS}) -> {Pid, mfarity(MFA)} end).
+%% calling_pids() ->
+%%     ets_stat(trace, fun({Pid, call, _MFA, _TS}) -> Pid end).
+
+%% calls() ->
+%%     ets_stat(trace, fun({Pid, call, MFA, _TS}) -> {Pid, mfarity(MFA)} end).
 
 flat_call_times_by_function() ->
     [{F,lists:foldl(fun({_Pid, Count, _, Time}, {TotalCount, TotalTime}) ->
@@ -44,9 +47,13 @@ raw_call_times_by_function() ->
 
 %% gen_server callbacks
 
--spec start(list()) -> {ok, pid()}.
-start(Opts) ->
-    gen_server:start({local, ?MODULE}, ?MODULE, Opts, []).
+-spec start_link() -> {ok, pid()}.
+start_link() ->
+    gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+
+-spec start() -> {ok, pid()}.
+start() ->
+    gen_server:start({local, ?MODULE}, ?MODULE, [], []).
 
 -spec init(list()) -> {ok, map()}.
 init(_Opts) ->
@@ -59,7 +66,11 @@ handle_call({start_trace, call, Modules}, _From, State) ->
     erlang:trace(all, true, [call, timestamp]),
     {reply, ok, State};
 handle_call({stop_trace, call}, _From, State) ->
+    erlang:trace_pattern({'_', '_', '_'}, false, []),
     erlang:trace(all, false, [call, timestamp]),
+    {reply, ok, State};
+handle_call(clean, _From, State) ->
+    ets:delete_all_objects(trace),
     {reply, ok, State};
 handle_call(Req, From, State) ->
     error_logger:error_msg("Unexpected call ~p from ~p.", [Req, From]),
@@ -72,13 +83,16 @@ handle_cast(Msg, State) ->
 
 -spec handle_info(any(), map()) -> {noreply, map()}.
 handle_info({trace_ts, Pid, call, MFA = {_, _, Args}, TS}, State) ->
-    ets:insert(trace, #tr{pid = Pid, event = call, mfarity = mfarity(MFA), data = Args, ts = TS}),
+    ets:insert(trace, #tr{pid = Pid, event = call, mfarity = mfarity(MFA), data = Args,
+                          ts = usec:from_now(TS)}),
     {noreply, State};
 handle_info({trace_ts, Pid, return_from, MFArity, Res, TS}, State) ->
-    ets:insert(trace, #tr{pid = Pid, event = return_from, mfarity = MFArity, data = Res, ts = TS}),
+    ets:insert(trace, #tr{pid = Pid, event = return_from, mfarity = MFArity, data = Res,
+                          ts = usec:from_now(TS)}),
     {noreply, State};
 handle_info({trace_ts, Pid, exception_from, MFArity, {Class, Value}, TS}, State) ->
-    ets:insert(trace, #tr{pid = Pid, event = exception_from, mfarity = MFArity, data = {Class, Value}, ts = TS}),
+    ets:insert(trace, #tr{pid = Pid, event = exception_from, mfarity = MFArity, data = {Class, Value},
+                          ts = usec:from_now(TS)}),
     {noreply, State};
 handle_info(Msg, State) ->
     error_logger:error_msg("Unexpected message ~p.", [Msg]),
@@ -113,11 +127,11 @@ sorted_call_stat(KeyF) ->
     lists:reverse(sort_by_time(call_stat(KeyF))).
 
 call_stat(KeyF) ->
-    {#{}, Stat} = ets:foldl(pa:bind(fun process_trace/3, KeyF), {#{}, #{}}, trace),
+    {#{}, #{}, Stat} = ets:foldl(pa:bind(fun process_trace/3, KeyF), {#{}, #{}, #{}}, trace),
     Stat.
 
 sort_by_time(MapStat) ->
-    lists:keysort(3, [{Key, Count, Time} || {Key, {Count, Time}} <- maps:to_list(MapStat)]).
+    lists:keysort(3, [{Key, Count, AccTime, OwnTime} || {Key, {Count, AccTime, OwnTime}} <- maps:to_list(MapStat)]).
 
 %% Trace inside function calls
 
@@ -167,14 +181,11 @@ trace_pid_inside_call(_PredF, #tr{event = Event}, no_state)
 
 %% Helpers
 
-stat(Items, KeyF) ->
-    lists:foldl(pa:bind(fun count_item/3, KeyF), #{}, Items).
+%% stat(Items, KeyF) ->
+%%     lists:foldl(pa:bind(fun count_item/3, KeyF), #{}, Items).
 
-ets_stat(Items, KeyF) ->
-    ets:foldl(pa:bind(fun count_item/3, KeyF), #{}, Items).
-
-map_stat(Map, KeyF, UpdateF, Init) ->
-    maps:fold(pa:bind(fun process_item/6, UpdateF, KeyF, Init), #{}, Map).
+%% ets_stat(Items, KeyF) ->
+%%     ets:foldl(pa:bind(fun count_item/3, KeyF), #{}, Items).
 
 process_item(UpdateF, KeyF, Init, ItemK, ItemV, Stat) ->
     process_item(UpdateF, KeyF, Init, {ItemK, ItemV}, Stat).
@@ -191,43 +202,79 @@ process_item(UpdateF, KeyF, Init, Item, Stat) ->
             Stat
     end.
 
-process_trace(_KeyF, #tr{pid = Pid, event = call, mfarity = MFArity, data = Args, ts = TS}, {TmpStat, Stat}) ->
-    TmpKey = {Pid, MFArity},
-    TmpStat1 = case maps:get(TmpKey, TmpStat, none) of
-                   none ->
-                       TmpStat#{TmpKey => {mfa(MFArity, Args), TS, 0}};
-                   {OrigMFA, OrigTS, N} ->
-                       TmpStat#{TmpKey => {OrigMFA, OrigTS, N+1}}
-               end,
-    {TmpStat1, Stat};
-process_trace(KeyF, #tr{pid = Pid, event = Event, mfarity = MFArity, ts = TS}, {TmpStat, Stat})
-  when Event =:= return_from;
-       Event =:= exception_from ->
-    TmpKey = {Pid, MFArity},
-    TmpVal = maps:get(TmpKey, TmpStat),
-    case TmpVal of
-        {OrigMFA, OrigTS, 0} ->
-            {maps:remove(TmpKey, TmpStat),
-             count_trace(catch KeyF(Pid, OrigMFA), OrigTS, TS, Stat)};
-        {OrigMFA, OrigTS, N} ->
-            {TmpStat#{TmpKey => {OrigMFA, OrigTS, N-1}},
-             Stat}
+process_trace(KeyF, Tr = #tr{pid = Pid}, {ProcessStates, TmpStat, Stat}) ->
+    {LastTr, LastKey, Stack} = maps:get(Pid, ProcessStates, {#tr{pid = Pid}, no_key, []}),
+    {NewStack, Key} = get_key_and_update_stack(KeyF, Stack, Tr),
+    TmpValue = maps:get(Key, TmpStat, none),
+    ProcessStates1 = ProcessStates#{Pid => {Tr, Key, NewStack}},
+    TmpStat1 = update_tmp(TmpStat, Tr, Key, TmpValue),
+    Stat1 = update_stat(Stat, LastTr, LastKey, Tr, Key, TmpValue),
+    {ProcessStates1, TmpStat1, Stat1}.
+
+-define(is_return(Event), (Event =:= return_from orelse Event =:= exception_from)).
+
+get_key_and_update_stack(KeyF, Stack, #tr{event = call, pid = Pid, mfarity = MFArity, data = Args}) ->
+    MFA = mfa(MFArity, Args),
+    Key = try KeyF(Pid, MFA)
+          catch _:_ -> no_key
+          end,
+    {[Key | Stack], Key};
+get_key_and_update_stack(_KeyF, [Key | Rest], #tr{event = Event}) when ?is_return(Event) ->
+    {Rest, Key}.
+
+update_tmp(TmpStat, #tr{event = call, ts = TS}, Key, none) ->
+    TmpStat#{Key => {TS, 0}};
+update_tmp(TmpStat, #tr{event = call}, Key, {OrigTS, N}) ->
+    TmpStat#{Key => {OrigTS, N+1}};
+update_tmp(TmpStat, #tr{event = Event}, Key, {OrigTS, N}) when ?is_return(Event), N > 0 ->
+    TmpStat#{Key => {OrigTS, N-1}};
+update_tmp(TmpStat, #tr{event = Event}, Key, {_OrigTS, 0}) when ?is_return(Event) ->
+    maps:remove(Key, TmpStat).
+
+update_stat(Stat, LastTr, LastKey, Tr, Key, TmpVal) ->
+    Stat1 = update_count(Tr, Key, Stat),
+    Stat2 = update_acc_time(TmpVal, Tr, Key, TmpVal, Stat1),
+    update_own_time(LastTr, LastKey, Tr, Key, Stat2).
+
+update_count(Tr, Key, Stat) ->
+    case count_key(Tr, Key) of
+        no_key ->
+            Stat;
+        KeyToUpdate ->
+            {Count, AccTime, OwnTime} = maps:get(KeyToUpdate, Stat, {0, 0, 0}),
+            Stat#{KeyToUpdate => {Count + 1, AccTime, OwnTime}}
     end.
 
-count_trace({'EXIT', _}, _, _, Stat) -> Stat;
-count_trace(Key, OrigTS, TS, Stat) ->
-    Time = usec:from_now(TS) - usec:from_now(OrigTS),
-    {Num, TotTime} = maps:get(Key, Stat, {0, 0}),
-    Stat#{Key => {Num + 1, TotTime + Time}}.
-
-count_item(KeyF, Item, Stat) ->
-    try
-        Key = KeyF(Item),
-        V = maps:get(Key, Stat, 0),
-        Stat#{Key => V + 1}
-    catch _:_ ->
-            Stat
+update_acc_time(TmpVal, Tr, Key, TmpVal, Stat) ->
+    case acc_time_key(TmpVal, Tr, Key) of
+        no_key ->
+            Stat;
+        KeyToUpdate ->
+            {Count, AccTime, OwnTime} = maps:get(KeyToUpdate, Stat, {0, 0, 0}),
+            {OrigTS, _N} = TmpVal,
+            NewAccTime = AccTime + Tr#tr.ts - OrigTS,
+            Stat#{KeyToUpdate => {Count, NewAccTime, OwnTime}}
     end.
+
+update_own_time(LastTr, LastKey, Tr, Key, Stat) ->
+    case own_time_key(LastTr, LastKey, Tr, Key) of
+        no_key ->
+            Stat;
+        KeyToUpdate ->
+            {Count, AccTime, OwnTime} = maps:get(KeyToUpdate, Stat, {0, 0, 0}),
+            NewOwnTime = OwnTime + Tr#tr.ts - LastTr#tr.ts,
+            Stat#{KeyToUpdate => {Count, AccTime, NewOwnTime}}
+    end.
+
+count_key(#tr{event = call}, Key) when Key =/= no_key -> Key;
+count_key(#tr{}, _) -> no_key.
+
+acc_time_key({_, 0}, #tr{event = Event}, Key) when ?is_return(Event), Key =/= no_key -> Key;
+acc_time_key(_, #tr{}, _) -> no_key.
+
+own_time_key(#tr{event = call}, LastKey, #tr{}, _) when LastKey =/= no_key -> LastKey;
+own_time_key(#tr{}, _, #tr{event = Event}, Key) when ?is_return(Event), Key =/= no_key -> Key;
+own_time_key(#tr{}, _, #tr{}, _) -> no_key.
 
 mfarity({M, F, A}) -> {M, F, maybe_length(A)}.
 

@@ -1,0 +1,12 @@
+[{<<"pa">>,
+  {git,"git://github.com/erszcz/pa.git",
+       {ref,"e53c540005f4114a854cfa414b00cbc7e9e65ecb"}},
+  0},
+ {<<"proper">>,
+  {git,"https://github.com/manopapad/proper.git",
+       {ref,"5f0d69c831b6c9f52535c3d1846efca480f6190d"}},
+  1},
+ {<<"usec">>,
+  {git,"git://github.com/esl/usec.git",
+       {ref,"f85ffd8350d7000c26392c18bdfcdbb30f3b5ee8"}},
+  0}].
