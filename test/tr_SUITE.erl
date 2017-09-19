@@ -10,7 +10,8 @@ all() ->
     [simple_total,
      acc_and_own_for_recursion,
      acc_and_own_for_recursion_with_exception,
-     acc_and_own_indirect_recursion_test].
+     acc_and_own_indirect_recursion_test,
+     dump_and_load].
 
 init_per_suite(Config) ->
     ok = application:start(erlang_doctor),
@@ -83,6 +84,19 @@ acc_and_own_indirect_recursion_test(_Config) ->
     ct:pal("~p~n", [ets:tab2list(trace)]),
     ct:pal("~p~n", [tr:sorted_call_stat(fun(Pid, MFA) -> MFA end)]),
     ct:pal("~p~n", [tr:sorted_call_stat(fun(Pid, MFA) -> tr:mfarity(MFA) end)]).
+
+dump_and_load(_Config) ->
+    DumpFile = "dump",
+    tr:trace_calls([{?MODULE, factorial, 1}]),
+    factorial(1),
+    tr:stop_tracing_calls(),
+    BeforeDump = tr:sorted_call_stat(fun(_Pid, _MFA) -> total end),
+    tr:dump(DumpFile),
+    tr:load(DumpFile),
+    AfterLoad = tr:sorted_call_stat(fun(_Pid, _MFA) -> total end),
+    ?assertEqual(BeforeDump, AfterLoad),
+    file:delete(DumpFile).
+
 
 %% Helpers
 

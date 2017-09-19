@@ -4,7 +4,7 @@
 
 -behaviour(gen_server).
 
--record(tr, {pid, event, mfarity, data, ts}).
+-record(tr, {index, pid, event, mfarity, data, ts}).
 
 %% mem_usage() ->
 %%     Ps = processes(),
@@ -23,6 +23,13 @@ trace_calls(Modules) ->
 
 stop_tracing_calls() ->
     gen_server:call(?MODULE, {stop_trace, call}).
+
+load(File) ->
+    gen_server:call(?MODULE, {load, File}).
+
+dump(File) ->
+    gen_server:call(?MODULE, {dump, File}).
+
 
 clean() ->
     gen_server:call(?MODULE, clean).
@@ -57,8 +64,9 @@ start() ->
 
 -spec init(list()) -> {ok, map()}.
 init(_Opts) ->
-    ets:new(trace, [named_table, public, duplicate_bag, {keypos, 2}]),
-    {ok, #{}}.
+    ets:new(trace, [named_table, public, ordered_set, {keypos, 2}]),
+    State = #{index => initial_index()},
+    {ok, State}.
 
 -spec handle_call(any(), {pid(), any()}, map()) -> {reply, ok, map()}.
 handle_call({start_trace, call, Modules}, _From, State) ->
@@ -72,6 +80,29 @@ handle_call({stop_trace, call}, _From, State) ->
 handle_call(clean, _From, State) ->
     ets:delete_all_objects(trace),
     {reply, ok, State};
+handle_call({dump, File}, _From, State) ->
+    ets:rename(trace, trace_dump),
+    Reply = ets:tab2file(trace_dump, File),
+    ets:rename(trace_dump, trace),
+    {reply, Reply, State};
+handle_call({load, File}, _From, State) ->
+    {NewState, Reply} =
+        case ets:file2tab(File) of
+            {ok, trace_dump} ->
+                ets:delete(trace),
+                ets:rename(trace_dump, trace),
+                Index =
+                    case ets:last(trace) of
+                        I when is_integer(I) ->
+                            I;
+                        _ ->
+                            initial_index()
+                    end,
+                {State#{index := Index}, ok};
+            Error ->
+                {State, Error}
+        end,
+    {reply, Reply, NewState};
 handle_call(Req, From, State) ->
     error_logger:error_msg("Unexpected call ~p from ~p.", [Req, From]),
     {reply, ok, State}.
@@ -82,18 +113,21 @@ handle_cast(Msg, State) ->
     {noreply, State}.
 
 -spec handle_info(any(), map()) -> {noreply, map()}.
-handle_info({trace_ts, Pid, call, MFA = {_, _, Args}, TS}, State) ->
-    ets:insert(trace, #tr{pid = Pid, event = call, mfarity = mfarity(MFA), data = Args,
+handle_info({trace_ts, Pid, call, MFA = {_, _, Args}, TS}, #{index := I} = State) ->
+    NextIndex = next_index(I),
+    ets:insert(trace, #tr{index = NextIndex, pid = Pid, event = call, mfarity = mfarity(MFA), data = Args,
                           ts = usec:from_now(TS)}),
-    {noreply, State};
-handle_info({trace_ts, Pid, return_from, MFArity, Res, TS}, State) ->
-    ets:insert(trace, #tr{pid = Pid, event = return_from, mfarity = MFArity, data = Res,
+    {noreply, State#{index := NextIndex}};
+handle_info({trace_ts, Pid, return_from, MFArity, Res, TS}, #{index := I} = State) ->
+    NextIndex = next_index(I),
+    ets:insert(trace, #tr{index = NextIndex, pid = Pid, event = return_from, mfarity = MFArity, data = Res,
                           ts = usec:from_now(TS)}),
-    {noreply, State};
-handle_info({trace_ts, Pid, exception_from, MFArity, {Class, Value}, TS}, State) ->
-    ets:insert(trace, #tr{pid = Pid, event = exception_from, mfarity = MFArity, data = {Class, Value},
+    {noreply, State#{index := NextIndex}};
+handle_info({trace_ts, Pid, exception_from, MFArity, {Class, Value}, TS}, #{index := I} = State) ->
+    NextIndex = next_index(I),
+    ets:insert(trace, #tr{index = NextIndex, pid = Pid, event = exception_from, mfarity = MFArity, data = {Class, Value},
                           ts = usec:from_now(TS)}),
-    {noreply, State};
+    {noreply, State#{index := NextIndex}};
 handle_info(Msg, State) ->
     error_logger:error_msg("Unexpected message ~p.", [Msg]),
     {noreply, State}.
@@ -187,6 +221,14 @@ trace_pid_inside_call(_PredF, #tr{event = Event}, no_state)
 %% ets_stat(Items, KeyF) ->
 %%     ets:foldl(pa:bind(fun count_item/3, KeyF), #{}, Items).
 
+-spec initial_index() -> non_neg_integer().
+initial_index() ->
+    0.
+
+-spec next_index(non_neg_integer()) -> non_neg_integer().
+next_index(I) ->
+    I + 1.
+
 process_item(UpdateF, KeyF, Init, ItemK, ItemV, Stat) ->
     process_item(UpdateF, KeyF, Init, {ItemK, ItemV}, Stat).
 
@@ -220,8 +262,15 @@ get_key_and_update_stack(KeyF, Stack, #tr{event = call, pid = Pid, mfarity = MFA
           end,
     {[Key | Stack], Key};
 get_key_and_update_stack(_KeyF, [Key | Rest], #tr{event = Event}) when ?is_return(Event) ->
-    {Rest, Key}.
+    {Rest, Key};
+get_key_and_update_stack(_, [], #tr{event = Event, mfarity = MFA}) when ?is_return(Event) ->
+    {M, F, A} = mfarity(MFA),
+    error_logger:warning_msg("Found a return trace from ~p:~p/~p without a call trace", [M, F, A]),
+    {[], no_key}.
 
+
+update_tmp(TmpStat, _, no_key, none) ->
+    TmpStat;
 update_tmp(TmpStat, #tr{event = call, ts = TS}, Key, none) ->
     TmpStat#{Key => {TS, 0}};
 update_tmp(TmpStat, #tr{event = call}, Key, {OrigTS, N}) ->
