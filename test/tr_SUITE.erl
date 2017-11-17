@@ -3,6 +3,7 @@
 
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("common_test/include/ct.hrl").
+-include_lib("erlang_doctor/include/tr.hrl").
 
 %% CT callbacks
 
@@ -10,8 +11,9 @@ all() ->
     [simple_total,
      acc_and_own_for_recursion,
      acc_and_own_for_recursion_with_exception,
-     acc_and_own_indirect_recursion_test,
-     dump_and_load].
+     acc_and_own_for_indirect_recursion,
+     dump_and_load,
+     interleave].
 
 init_per_suite(Config) ->
     ok = application:start(erlang_doctor),
@@ -24,7 +26,7 @@ end_per_suite(Config) ->
 init_per_testcase(_TC, Config) ->
     Config.
 
-end_per_testcase(_TC, Config) ->
+end_per_testcase(_TC, _Config) ->
     tr:clean().
 
 %% Test cases
@@ -33,9 +35,11 @@ simple_total(_Config) ->
     tr:trace_calls([{?MODULE, factorial, 1}]),
     ?MODULE:factorial(2),
     ct:sleep(10),
+    ct:pal("~p~n", [ets:tab2list(trace)]),
     [{total, 3, Acc1, Acc1}] = tr:sorted_call_stat(fun(_Pid, _MFA) -> total end),
     ?MODULE:factorial(1),
     ct:sleep(10),
+    ct:pal("~p~n", [ets:tab2list(trace)]),
     [{total, 5, Acc2, Acc2}] = tr:sorted_call_stat(fun(_Pid, _MFA) -> total end),
     ?assertEqual(true, Acc1 < Acc2),
     tr:stop_tracing_calls(),
@@ -43,12 +47,14 @@ simple_total(_Config) ->
     %% Tracing disabled
     ?MODULE:factorial(1),
     ct:sleep(10),
+    ct:pal("~p~n", [ets:tab2list(trace)]),
     [{total, 5, Acc2, Acc2}] = tr:sorted_call_stat(fun(_Pid, _MFA) -> total end),
 
     %% Tracing enabled for a different function
     tr:trace_calls([{?MODULE, factorial2, 1}]),
     ?MODULE:factorial(1),
     ct:sleep(10),
+    ct:pal("~p~n", [ets:tab2list(trace)]),
     [{total, 5, Acc2, Acc2}] = tr:sorted_call_stat(fun(_Pid, _MFA) -> total end),
     tr:stop_tracing_calls().
 
@@ -57,6 +63,7 @@ acc_and_own_for_recursion(_Config) ->
     ?MODULE:sleepy_factorial(2),
     ct:sleep(10),
     Stat = tr:sorted_call_stat(fun(_Pid, {_, _, [Arg]}) -> Arg end),
+    ct:pal("~p~n", [ets:tab2list(trace)]),
     ct:pal("Stat: ~p~n", [Stat]),
     [{2, 1, Acc2, Own2},
      {1, 1, Acc1, Own1},
@@ -69,6 +76,7 @@ acc_and_own_for_recursion_with_exception(_Config) ->
     catch ?MODULE:bad_factorial(2),
     ct:sleep(10),
     Stat = tr:sorted_call_stat(fun(_Pid, {_, _, [Arg]}) -> Arg end),
+    ct:pal("~p~n", [ets:tab2list(trace)]),
     ct:pal("Stat: ~p~n", [Stat]),
     [{2, 1, Acc2, Own2},
      {1, 1, Acc1, Own1},
@@ -76,14 +84,60 @@ acc_and_own_for_recursion_with_exception(_Config) ->
     ?assertEqual(Acc2, Own2 + Own1 + Acc0),
     ?assertEqual(Acc1, Own1 + Acc0).
 
-acc_and_own_indirect_recursion_test(_Config) ->
+acc_and_own_for_indirect_recursion(_Config) ->
     tr:trace_calls([?MODULE]),
     ?MODULE:factorial_with_helper(2),
     tr:stop_tracing_calls(),
     ct:sleep(10),
+    Traces = ets:tab2list(trace),
+    ct:pal("~p~n", [Traces]),
+    [#tr{event = call, mfarity = {_, factorial_with_helper, 1}, data = [2], ts = T1},
+     #tr{event = call, mfarity = {_, factorial_helper, 1}, data = [2], ts = T2},
+     #tr{event = call, mfarity = {_, factorial_with_helper, 1}, data = [1], ts = T3},
+     #tr{event = call, mfarity = {_, factorial_helper, 1}, data = [1], ts = T4},
+     #tr{event = call, mfarity = {_, factorial_with_helper, 1}, data = [0], ts = T5},
+     #tr{event = return_from, mfarity = {_, factorial_with_helper, 1}, data = 1, ts = T6},
+     #tr{event = return_from, mfarity = {_, factorial_helper, 1}, data = 1, ts = T7},
+     #tr{event = return_from, mfarity = {_, factorial_with_helper, 1}, data = 1, ts = T8},
+     #tr{event = return_from, mfarity = {_, factorial_helper, 1}, data = 2, ts = T9},
+     #tr{event = return_from, mfarity = {_, factorial_with_helper, 1}, data = 2, ts = T10}] = Traces,
+    Stat = tr:sorted_call_stat(fun(_Pid, {_, factorial_with_helper, Args}) -> Args end),
+    ct:pal("Stat: ~p~n", [Stat]),
+    [{[2], 1, Acc1, Own1},
+     {[1], 1, Acc2, Own2},
+     {[0], 1, Acc3, Acc3}] = Stat,
+    ?assertEqual(Acc1, T10 - T1),
+    ?assertEqual(Own1, (T2 - T1) + (T10 - T9)),
+    ?assertEqual(Acc2, T8 - T3),
+    ?assertEqual(Own2, (T4 - T3) + (T8 - T7)),
+    ?assertEqual(Acc3, T6 - T5),
+    FStat = tr:sorted_call_stat(fun(_Pid, {_, F, _}) -> F end),
+    ct:pal("FStat: ~p~n", [FStat]),
+    [{factorial_with_helper, 3, Acc1, OwnF1},
+     {factorial_helper, 2, AccF2, OwnF2}] = FStat,
+    ?assertEqual(AccF2, T9 - T2),
+    ?assertEqual(OwnF1, Own1 + Own2 + Acc3),
+    ?assertEqual(OwnF2, (T3 - T2) + (T5 - T4) + (T7 - T6) + (T9 - T8)).
+
+interleave(_Config) ->
+    tr:trace_calls([?MODULE]),
+    Self = self(),
+    P1 = spawn(?MODULE, reply_after, [Self, 10]),
+    ct:sleep(5),
+    P2 = spawn(?MODULE, reply_after, [Self, 10]),
+    receive P1 -> ok end,
+    receive P2 -> ok end,
+    ct:sleep(10),
+    tr:stop_tracing_calls(),
     ct:pal("~p~n", [ets:tab2list(trace)]),
-    ct:pal("~p~n", [tr:sorted_call_stat(fun(Pid, MFA) -> MFA end)]),
-    ct:pal("~p~n", [tr:sorted_call_stat(fun(Pid, MFA) -> tr:mfarity(MFA) end)]).
+    [#tr{pid = P1, event = call, ts = T1},
+     #tr{pid = P2, event = call, ts = T2},
+     #tr{pid = P1, event = return_from, ts = T3},
+     #tr{pid = P2, event = return_from, ts = T4}] = ets:tab2list(trace),
+    Stat = tr:sorted_call_stat(fun(_Pid, {_, F, A}) -> {F, A} end),
+    ct:pal("Stat: ~p~n", [Stat]),
+    [{{reply_after, [Self, 10]}, 2, DT, DT}] = Stat,
+    ?assertEqual(DT, (T3 - T1) + (T4 - T2)).
 
 dump_and_load(_Config) ->
     DumpFile = "dump",
@@ -122,3 +176,7 @@ factorial_with_helper(0) ->
     1.
 
 factorial_helper(N) -> N * factorial_with_helper(N - 1).
+
+reply_after(Sender, Delay) ->
+    ct:sleep(Delay),
+    Sender ! self().

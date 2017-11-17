@@ -4,7 +4,7 @@
 
 -behaviour(gen_server).
 
--record(tr, {index, pid, event, mfarity, data, ts}).
+-include("tr.hrl").
 
 %% mem_usage() ->
 %%     Ps = processes(),
@@ -247,9 +247,10 @@ process_item(UpdateF, KeyF, Init, Item, Stat) ->
 process_trace(KeyF, Tr = #tr{pid = Pid}, {ProcessStates, TmpStat, Stat}) ->
     {LastTr, LastKey, Stack} = maps:get(Pid, ProcessStates, {#tr{pid = Pid}, no_key, []}),
     {NewStack, Key} = get_key_and_update_stack(KeyF, Stack, Tr),
-    TmpValue = maps:get(Key, TmpStat, none),
+    TmpKey = tmp_key(Tr, Key),
+    TmpValue = maps:get(TmpKey, TmpStat, none),
     ProcessStates1 = ProcessStates#{Pid => {Tr, Key, NewStack}},
-    TmpStat1 = update_tmp(TmpStat, Tr, Key, TmpValue),
+    TmpStat1 = update_tmp(TmpStat, Tr, TmpKey, TmpValue),
     Stat1 = update_stat(Stat, LastTr, LastKey, Tr, Key, TmpValue),
     {ProcessStates1, TmpStat1, Stat1}.
 
@@ -268,6 +269,8 @@ get_key_and_update_stack(_, [], #tr{event = Event, mfarity = MFA}) when ?is_retu
     error_logger:warning_msg("Found a return trace from ~p:~p/~p without a call trace", [M, F, A]),
     {[], no_key}.
 
+tmp_key(#tr{}, no_key) -> no_key;
+tmp_key(#tr{pid = Pid}, Key) -> {Pid, Key}.
 
 update_tmp(TmpStat, _, no_key, none) ->
     TmpStat;
