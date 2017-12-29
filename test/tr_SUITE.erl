@@ -13,7 +13,9 @@ all() ->
      acc_and_own_for_recursion_with_exception,
      acc_and_own_for_indirect_recursion,
      dump_and_load,
-     interleave].
+     interleave,
+     call_without_return,
+     return_without_call].
 
 init_per_suite(Config) ->
     ok = application:start(erlang_doctor),
@@ -138,6 +140,23 @@ interleave(_Config) ->
     ct:pal("Stat: ~p~n", [Stat]),
     [{{reply_after, [Self, 10]}, 2, DT, DT}] = Stat,
     ?assertEqual(DT, (T3 - T1) + (T4 - T2)).
+
+call_without_return(_Config) ->
+    tr:trace_calls([?MODULE]),
+    P1 = spawn(?MODULE, reply_after, [self(), 10]),
+    ct:sleep(5),
+    tr:stop_tracing_calls(),
+    receive P1 -> ok end,
+    ct:pal("~p~n", [ets:tab2list(trace)]).
+
+return_without_call(_Config) ->
+    P1 = spawn(?MODULE, reply_after, [self(), 100]),
+    ct:sleep(5),
+    tr:trace_calls([?MODULE]),
+    receive P1 -> ok end,
+    ct:sleep(10),
+    tr:stop_tracing_calls(),
+    ct:pal("~p~n", [ets:tab2list(trace)]).
 
 dump_and_load(_Config) ->
     DumpFile = "dump",
