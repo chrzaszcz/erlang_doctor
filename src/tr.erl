@@ -65,18 +65,18 @@ start() ->
 -spec init(list()) -> {ok, map()}.
 init(_Opts) ->
     ets:new(trace, [named_table, public, ordered_set, {keypos, 2}]),
-    State = #{index => initial_index()},
+    State = #{index => initial_index(), traced_modules => []},
     {ok, State}.
 
 -spec handle_call(any(), {pid(), any()}, map()) -> {reply, ok, map()}.
 handle_call({start_trace, call, Modules}, _From, State) ->
     [enable_trace_pattern(Mod) || Mod <- Modules],
     erlang:trace(all, true, [call, timestamp]),
-    {reply, ok, State};
-handle_call({stop_trace, call}, _From, State) ->
-    erlang:trace_pattern({'_', '_', '_'}, false, []),
+    {reply, ok, State#{traced_modules := Modules}};
+handle_call({stop_trace, call}, _From, State = #{traced_modules := Modules}) ->
     erlang:trace(all, false, [call, timestamp]),
-    {reply, ok, State};
+    [disable_trace_pattern(Mod) || Mod <- Modules],
+    {reply, ok, State#{traced_modules := []}};
 handle_call(clean, _From, State) ->
     ets:delete_all_objects(trace),
     {reply, ok, State};
@@ -140,17 +140,18 @@ terminate(_Reason, #{}) ->
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
-enable_trace_pattern(Mod) when is_atom(Mod) ->
-    enable_trace_pattern({Mod, '_', '_'});
-enable_trace_pattern({_, _, _} = MFA) ->
-    enable_trace_pattern({MFA, [local, call_time]});
-enable_trace_pattern({Mod, Opts}) when is_atom(Mod) ->
-    enable_trace_pattern({{Mod, '_', '_'}, Opts});
-enable_trace_pattern({{M, F, A}, Opts}) ->
-    code:load_file(M),
-    erlang:trace_pattern({M, F, A},
-                         [{'_', [], [{exception_trace}]}],
-                         Opts).
+enable_trace_pattern(Mod) ->
+    {MFA, Opts} = trace_pattern_and_opts(Mod),
+    erlang:trace_pattern(MFA, [{'_', [], [{exception_trace}]}], Opts).
+
+disable_trace_pattern(Mod) ->
+    {MFA, Opts} = trace_pattern_and_opts(Mod),
+    erlang:trace_pattern(MFA, false, Opts).
+
+trace_pattern_and_opts(Mod) when is_atom(Mod) -> trace_pattern_and_opts({Mod, '_', '_'});
+trace_pattern_and_opts({_, _, _} = MFA) -> {MFA, [local, call_time]};
+trace_pattern_and_opts({Mod, Opts}) when is_atom(Mod) -> {{Mod, '_', '_'}, Opts};
+trace_pattern_and_opts({{_M, _F, _A} = MFA, Opts}) -> {MFA, Opts}.
 
 %% Call stat
 
