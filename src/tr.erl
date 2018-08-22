@@ -52,6 +52,30 @@ flat_call_times_by_function() ->
 raw_call_times_by_function() ->
     [{F,erlang:trace_info(F, call_time)} || {F,_} <- maps:to_list(?MODULE:called_functions())].
 
+select() ->
+    ets:tab2list(trace).
+
+select(F) ->
+    ets:select(trace, ets:fun2ms(F)).
+
+select(F, DataVal) ->
+    MS = ets:fun2ms(F),
+    SelectRes = ets:select(trace, MS, 1000),
+    select(MS, DataVal, [], SelectRes).
+
+select(_MS, _DataVal, DataAcc, '$end_of_table') ->
+    lists:append(lists:reverse(DataAcc));
+select(MS, DataVal, DataAcc, {Matched, Cont}) ->
+    Filtered = lists:filter(fun(#tr{data = Data}) -> contains_val(DataVal, Data) end, Matched),
+    SelectRes = ets:select(Cont),
+    select(MS, DataVal, [Filtered | DataAcc], SelectRes).
+
+contains_val(DataVal, DataVal) -> true;
+contains_val(DataVal, L) when is_list(L) -> lists:any(fun(El) -> contains_val(DataVal, El) end, L);
+contains_val(DataVal, T) when is_tuple(T) -> contains_val(DataVal, tuple_to_list(T));
+contains_val(DataVal, M) when is_map(M) -> contains_val(DataVal, maps:to_list(M));
+contains_val(_, _) -> false.
+
 %% gen_server callbacks
 
 -spec start_link() -> {ok, pid()}.
