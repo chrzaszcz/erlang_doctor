@@ -4,19 +4,7 @@
 
 -behaviour(gen_server).
 
--include("tr.hrl").
-
-%% mem_usage() ->
-%%     Ps = processes(),
-%%     Stat = [{F, Mem, Count, Mem * Count}
-%%             || {{F, Mem}, Count} <- maps:to_list(stat(Ps, fun mem_usage_key/1))],
-%%     lists:reverse(lists:keysort(4, Stat)).
-
-mem_usage_key(Pid) ->
-    list_to_tuple([element(2, process_info(Pid, Attr)) || Attr <- key_attrs()]).
-
-key_attrs() ->
-    [current_function, memory].
+-record(tr, {index, pid, event, mfarity, data, ts}).
 
 trace_calls(Modules) ->
     gen_server:call(?MODULE, {start_trace, call, Modules}).
@@ -33,24 +21,6 @@ dump(File) ->
 
 clean() ->
     gen_server:call(?MODULE, clean).
-
-%% called_functions() ->
-%%     ets_stat(trace, fun({_Pid, call, MFA, _TS}) -> mfarity(MFA) end).
-
-%% calling_pids() ->
-%%     ets_stat(trace, fun({Pid, call, _MFA, _TS}) -> Pid end).
-
-%% calls() ->
-%%     ets_stat(trace, fun({Pid, call, MFA, _TS}) -> {Pid, mfarity(MFA)} end).
-
-flat_call_times_by_function() ->
-    [{F,lists:foldl(fun({_Pid, Count, _, Time}, {TotalCount, TotalTime}) ->
-                            {TotalCount + Count, TotalTime + Time}
-                    end, {0, 0}, CallTimes)}
-     || {F, {call_time, CallTimes}} <- raw_call_times_by_function()].
-
-raw_call_times_by_function() ->
-    [{F,erlang:trace_info(F, call_time)} || {F,_} <- maps:to_list(?MODULE:called_functions())].
 
 select() ->
     ets:tab2list(trace).
@@ -140,17 +110,17 @@ handle_cast(Msg, State) ->
 handle_info({trace_ts, Pid, call, MFA = {_, _, Args}, TS}, #{index := I} = State) ->
     NextIndex = next_index(I),
     ets:insert(trace, #tr{index = NextIndex, pid = Pid, event = call, mfarity = mfarity(MFA), data = Args,
-                          ts = usec:from_now(TS)}),
+                          ts = usec_from_now(TS)}),
     {noreply, State#{index := NextIndex}};
 handle_info({trace_ts, Pid, return_from, MFArity, Res, TS}, #{index := I} = State) ->
     NextIndex = next_index(I),
     ets:insert(trace, #tr{index = NextIndex, pid = Pid, event = return_from, mfarity = MFArity, data = Res,
-                          ts = usec:from_now(TS)}),
+                          ts = usec_from_now(TS)}),
     {noreply, State#{index := NextIndex}};
 handle_info({trace_ts, Pid, exception_from, MFArity, {Class, Value}, TS}, #{index := I} = State) ->
     NextIndex = next_index(I),
     ets:insert(trace, #tr{index = NextIndex, pid = Pid, event = exception_from, mfarity = MFArity, data = {Class, Value},
-                          ts = usec:from_now(TS)}),
+                          ts = usec_from_now(TS)}),
     {noreply, State#{index := NextIndex}};
 handle_info(Msg, State) ->
     error_logger:error_msg("Unexpected message ~p.", [Msg]),
@@ -185,17 +155,21 @@ print_sorted_call_stat(KeyF, Length) ->
 sorted_call_stat(KeyF) ->
     lists:reverse(sort_by_time(call_stat(KeyF))).
 
-call_stat(KeyF) ->
-    {#{}, #{}, Stat} = ets:foldl(pa:bind(fun process_trace/3, KeyF), {#{}, #{}, #{}}, trace),
-    Stat.
+call_stat(KeyF) when is_function(KeyF, 2) ->
+    call_stat(cf(KeyF));
+call_stat(KeyF) when is_function(KeyF, 1) ->
+    {#{}, #{}, State} = ets:foldl(fun(Tr, State) -> process_trace(KeyF, Tr, State) end, {#{}, #{}, #{}}, trace),
+    State.
 
 sort_by_time(MapStat) ->
     lists:keysort(3, [{Key, Count, AccTime, OwnTime} || {Key, {Count, AccTime, OwnTime}} <- maps:to_list(MapStat)]).
 
 %% Trace inside function calls
 
-trace_inside_calls(PredF) ->
-    {Traces, #{}} = ets:foldl(pa:bind(fun trace_inside_call/3, PredF), {[], #{}}, trace),
+trace_inside_calls(PredF) when is_function(PredF, 2) ->
+    trace_inside_calls(cf(PredF));
+trace_inside_calls(PredF) when is_function(PredF, 1) ->
+    {Traces, #{}} = ets:foldl(fun(T, S) -> trace_inside_call(PredF, T, S) end, {[], #{}}, trace),
     lists:reverse(Traces).
 
 trace_inside_call(PredF, T = #tr{pid = Pid}, {Traces, State}) ->
@@ -212,8 +186,8 @@ trace_pid_inside_call(_PredF, T = #tr{event = call, mfarity = MFArity}, State = 
     {incomplete, State#{depth => Depth + 1, trace => [T|Trace]}};
 trace_pid_inside_call(_PredF, T = #tr{event = call}, State = #{trace := Trace}) ->
     {incomplete, State#{trace => [T|Trace]}};
-trace_pid_inside_call(PredF, T = #tr{pid = Pid, event = call, mfarity = MFArity, data = Args}, no_state) ->
-    case catch PredF(Pid, MFArity, Args) of
+trace_pid_inside_call(PredF, T = #tr{event = call, mfarity = MFArity}, no_state) ->
+    case catch PredF(T) of
         true -> {incomplete, #{depth => 1, mfarity => MFArity, trace => [T]}};
         _ -> none
     end;
@@ -238,13 +212,13 @@ trace_pid_inside_call(_PredF, #tr{event = Event}, no_state)
        Event =:= exception_from ->
     none.
 
+cf(F) ->
+    fun(#tr{event = call, pid = Pid, mfarity = MFArity, data = Args}) ->
+            MFA = mfa(MFArity, Args),
+            F(Pid, MFA)
+    end.
+
 %% Helpers
-
-%% stat(Items, KeyF) ->
-%%     lists:foldl(pa:bind(fun count_item/3, KeyF), #{}, Items).
-
-%% ets_stat(Items, KeyF) ->
-%%     ets:foldl(pa:bind(fun count_item/3, KeyF), #{}, Items).
 
 -spec initial_index() -> non_neg_integer().
 initial_index() ->
@@ -258,7 +232,7 @@ process_item(UpdateF, KeyF, Init, ItemK, ItemV, Stat) ->
     process_item(UpdateF, KeyF, Init, {ItemK, ItemV}, Stat).
 
 ets_stat(Tab, KeyF, UpdateF, Init) ->
-    ets:foldl(pa:bind(fun process_item/5, UpdateF, KeyF, Init), #{}, Tab).
+    ets:foldl(fun(Item, Stat) -> process_item(UpdateF, KeyF, Init, Item, Stat) end, #{}, Tab).
 
 process_item(UpdateF, KeyF, Init, Item, Stat) ->
     case KeyF(Item) of
@@ -281,9 +255,8 @@ process_trace(KeyF, Tr = #tr{pid = Pid}, {ProcessStates, TmpStat, Stat}) ->
 
 -define(is_return(Event), (Event =:= return_from orelse Event =:= exception_from)).
 
-get_key_and_update_stack(KeyF, Stack, #tr{event = call, pid = Pid, mfarity = MFArity, data = Args}) ->
-    MFA = mfa(MFArity, Args),
-    Key = try KeyF(Pid, MFA)
+get_key_and_update_stack(KeyF, Stack, T = #tr{event = call}) ->
+    Key = try KeyF(T)
           catch _:_ -> no_key
           end,
     {[Key | Stack], Key};
@@ -381,3 +354,6 @@ pretty_print_tuple_list(TList, MaxRows) ->
 
 pad(L, Size) when length(L) < Size -> L ++ lists:duplicate(Size-length(L), "");
 pad(L, _) -> L.
+
+usec_from_now({MegaSecs, Secs, Usecs}) ->
+    (MegaSecs * 1000000 + Secs) * 1000000 + Usecs.
