@@ -6,6 +6,8 @@
 
 -record(tr, {index, pid, event, mfarity, data, ts}).
 
+-define(is_trace(Tr), element(1, (Tr)) =:= trace orelse element(1, (Tr)) =:= trace_ts).
+
 trace_calls(Modules) ->
     gen_server:call(?MODULE, {start_trace, call, Modules}).
 
@@ -57,10 +59,12 @@ start() ->
     gen_server:start({local, ?MODULE}, ?MODULE, [], []).
 
 -spec init(list()) -> {ok, map()}.
-init(_Opts) ->
+init(Opts) ->
+    {ok, do_init(Opts)}.
+
+do_init(_Opts) ->
     ets:new(trace, [named_table, public, ordered_set, {keypos, 2}]),
-    State = #{index => initial_index(), traced_modules => []},
-    {ok, State}.
+    #{index => initial_index(), traced_modules => []}.
 
 -spec handle_call(any(), {pid(), any()}, map()) -> {reply, ok, map()}.
 handle_call({start_trace, call, Modules}, _From, State) ->
@@ -107,24 +111,29 @@ handle_cast(Msg, State) ->
     {noreply, State}.
 
 -spec handle_info(any(), map()) -> {noreply, map()}.
-handle_info({trace_ts, Pid, call, MFA = {_, _, Args}, TS}, #{index := I} = State) ->
-    NextIndex = next_index(I),
-    ets:insert(trace, #tr{index = NextIndex, pid = Pid, event = call, mfarity = mfarity(MFA), data = Args,
-                          ts = usec_from_now(TS)}),
-    {noreply, State#{index := NextIndex}};
-handle_info({trace_ts, Pid, return_from, MFArity, Res, TS}, #{index := I} = State) ->
-    NextIndex = next_index(I),
-    ets:insert(trace, #tr{index = NextIndex, pid = Pid, event = return_from, mfarity = MFArity, data = Res,
-                          ts = usec_from_now(TS)}),
-    {noreply, State#{index := NextIndex}};
-handle_info({trace_ts, Pid, exception_from, MFArity, {Class, Value}, TS}, #{index := I} = State) ->
-    NextIndex = next_index(I),
-    ets:insert(trace, #tr{index = NextIndex, pid = Pid, event = exception_from, mfarity = MFArity, data = {Class, Value},
-                          ts = usec_from_now(TS)}),
-    {noreply, State#{index := NextIndex}};
+handle_info(Trace, State) when ?is_trace(Trace) ->
+    {noreply, handle_trace(Trace, State)};
 handle_info(Msg, State) ->
     error_logger:error_msg("Unexpected message ~p.", [Msg]),
     {noreply, State}.
+
+handle_trace({trace_ts, Pid, call, MFA = {_, _, Args}, TS}, #{index := I} = State) ->
+    NextIndex = next_index(I),
+    ets:insert(trace, #tr{index = NextIndex, pid = Pid, event = call, mfarity = mfarity(MFA), data = Args,
+                          ts = usec_from_now(TS)}),
+    State#{index := NextIndex};
+handle_trace({trace_ts, Pid, return_from, MFArity, Res, TS}, #{index := I} = State) ->
+    NextIndex = next_index(I),
+    ets:insert(trace, #tr{index = NextIndex, pid = Pid, event = return_from, mfarity = MFArity, data = Res,
+                          ts = usec_from_now(TS)}),
+    State#{index := NextIndex};
+handle_trace({trace_ts, Pid, exception_from, MFArity, {Class, Value}, TS}, #{index := I} = State) ->
+    NextIndex = next_index(I),
+    ets:insert(trace, #tr{index = NextIndex, pid = Pid, event = exception_from, mfarity = MFArity, data = {Class, Value},
+                          ts = usec_from_now(TS)}),
+    State#{index := NextIndex};
+handle_trace(end_of_trace, State) ->
+    State.
 
 -spec terminate(any(), map()) -> ok.
 terminate(_Reason, #{}) ->
