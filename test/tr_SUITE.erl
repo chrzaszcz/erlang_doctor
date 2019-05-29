@@ -166,8 +166,8 @@ dump_and_load(_Config) ->
     factorial(1),
     tr:stop_tracing_calls(),
     BeforeDump = tr:sorted_call_stat(fun(_) -> total end),
-    tr:dump(DumpFile, trace),
-    tr:load(DumpFile, trace),
+    tr:dump(DumpFile),
+    tr:load(DumpFile),
     AfterLoad = tr:sorted_call_stat(fun(_) -> total end),
     ?assertEqual(BeforeDump, AfterLoad),
     file:delete(DumpFile).
@@ -179,25 +179,26 @@ factorial(N) when N > 0 -> N * factorial(N - 1);
 factorial(0) -> 1.
 
 sleepy_factorial(N) when N > 0 ->
-    ct:sleep(1),
-    sleepy_factorial(N-1);
+    timer:sleep(1),
+    N * sleepy_factorial(N-1);
 sleepy_factorial(0) ->
-    ct:sleep(1),
+    timer:sleep(1),
     1.
 
+-spec bad_factorial(integer()) -> no_return().
 bad_factorial(N) when N > 0 ->
-    ct:sleep(1),
+    timer:sleep(1),
     N * bad_factorial(N - 1).
 
 factorial_with_helper(N) when N > 0 ->
-    ct:sleep(1),
+    timer:sleep(1),
     factorial_helper(N);
 factorial_with_helper(0) ->
-    ct:sleep(1),
+    timer:sleep(1),
     1.
 
 factorial_helper(N) -> N * factorial_with_helper(N - 1).
 
 reply_after(Sender, Delay) ->
-    ct:sleep(Delay),
+    timer:sleep(Delay),
     Sender ! self().

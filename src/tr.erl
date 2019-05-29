@@ -9,18 +9,18 @@
          stop_tracing_calls/0,
          tab/0,
          set_tab/1,
-         load/2,
-         dump/2,
+         load/1,
+         dump/1,
          clean/0]).
 
 %% API - analysis
 -export([select/0, select/1, select/2,
          filter/1, filter/2,
+         filter_tracebacks/1, filter_tracebacks/2,
+         filter_ranges/1, filter_ranges/2,
          print_sorted_call_stat/2,
          sorted_call_stat/1,
-         call_stat/1, call_stat/2,
-         filter_tracebacks/1, filter_tracebacks/2,
-         filter_ranges/1, filter_ranges/2]).
+         call_stat/1, call_stat/2]).
 
 %% API - utilities
 -export([contains_data/2,
@@ -42,7 +42,7 @@
 -record(tr, {index :: pos_integer(),
              pid :: pid(),
              event :: call | return_from | exception_from,
-             mfa :: {atom(), atom(), non_neg_integer()},
+             mfa :: {module(), atom(), non_neg_integer()},
              data :: term(),
              ts :: integer()}).
 
@@ -75,24 +75,31 @@ start(Opts) ->
 
 -define(is_trace(Tr), element(1, (Tr)) =:= trace orelse element(1, (Tr)) =:= trace_ts).
 
+-spec trace_calls([module()] | [{module(), atom(), non_neg_integer()}]) -> ok.
 trace_calls(Modules) ->
     gen_server:call(?MODULE, {start_trace, call, Modules}).
 
+-spec stop_tracing_calls() -> ok.
 stop_tracing_calls() ->
     gen_server:call(?MODULE, {stop_trace, call}).
 
+-spec tab() -> atom().
 tab() ->
     gen_server:call(?MODULE, get_tab).
 
+-spec set_tab(atom()) -> ok.
 set_tab(Tab) ->
     gen_server:call(?MODULE, {set_tab, Tab}).
 
-load(File, Tab) ->
-    gen_server:call(?MODULE, {load, File, Tab}).
+-spec load(string()) -> {ok, atom()} | {error, any()}.
+load(File) ->
+    gen_server:call(?MODULE, {load, File}).
 
-dump(File, Tab) ->
-    gen_server:call(?MODULE, {dump, File, Tab}).
+-spec dump(string()) -> ok | {error, any()}.
+dump(File) ->
+    gen_server:call(?MODULE, {dump, File}).
 
+-spec clean() -> ok.
 clean() ->
     gen_server:call(?MODULE, clean).
 
@@ -121,23 +128,6 @@ filter(F, Tab) ->
     Traces = foldl(fun(Tr, State) -> filter_trace(F, Tr, State) end, [], Tab),
     lists:reverse(Traces).
 
--spec print_sorted_call_stat(selector(), pos_integer()) -> ok.
-print_sorted_call_stat(KeyF, Length) ->
-    pretty_print_tuple_list(sorted_call_stat(KeyF), Length).
-
--spec sorted_call_stat(selector()) -> [{term(), call_count(), acc_time(), own_time()}].
-sorted_call_stat(KeyF) ->
-    lists:reverse(sort_by_time(call_stat(KeyF))).
-
--spec call_stat(selector()) -> #{term() => {call_count(), acc_time(), own_time()}}.
-call_stat(KeyF) ->
-    call_stat(KeyF, tab()).
-
--spec call_stat(selector(), atom() | [tr()]) -> #{term() => {call_count(), acc_time(), own_time()}}.
-call_stat(KeyF, Tab) ->
-    {#{}, #{}, State} = foldl(fun(Tr, State) -> call_stat_step(KeyF, Tr, State) end, {#{}, #{}, #{}}, Tab),
-    State.
-
 %% Returns tracebacks: [Call1, ..., CallN] when PredF(CallN)
 -spec filter_tracebacks(pred()) -> [[tr()]].
 filter_tracebacks(PredF) ->
@@ -159,6 +149,23 @@ filter_ranges(PredF) ->
 filter_ranges(PredF, Tab) ->
     {Traces, #{}} = foldl(fun(T, S) -> filter_ranges_step(PredF, T, S) end, {[], #{}}, Tab),
     lists:reverse(Traces).
+
+-spec print_sorted_call_stat(selector(), pos_integer()) -> ok.
+print_sorted_call_stat(KeyF, Length) ->
+    pretty_print_tuple_list(sorted_call_stat(KeyF), Length).
+
+-spec sorted_call_stat(selector()) -> [{term(), call_count(), acc_time(), own_time()}].
+sorted_call_stat(KeyF) ->
+    lists:reverse(sort_by_time(call_stat(KeyF))).
+
+-spec call_stat(selector()) -> #{term() => {call_count(), acc_time(), own_time()}}.
+call_stat(KeyF) ->
+    call_stat(KeyF, tab()).
+
+-spec call_stat(selector(), atom() | [tr()]) -> #{term() => {call_count(), acc_time(), own_time()}}.
+call_stat(KeyF, Tab) ->
+    {#{}, #{}, State} = foldl(fun(Tr, State) -> call_stat_step(KeyF, Tr, State) end, {#{}, #{}, #{}}, Tab),
+    State.
 
 %% API - utilities
 
@@ -217,13 +224,13 @@ handle_call({stop_trace, call}, _From, State = #{traced_modules := Modules}) ->
 handle_call(clean, _From, State = #{tab := Tab}) ->
     ets:delete_all_objects(Tab),
     {reply, ok, State};
-handle_call({dump, File, Tab}, _From, State) ->
+handle_call({dump, File}, _From, State = #{tab := Tab}) ->
     Reply = ets:tab2file(Tab, File),
     {reply, Reply, State};
-handle_call({load, File, Tab}, _From, State = #{tab := Tab}) ->
+handle_call({load, File}, _From, State) ->
     Reply = ets:file2tab(File),
     NewState = case Reply of
-                   {ok, Tab} -> State#{index := index(Tab)};
+                   {ok, Tab} -> State#{tab := Tab, index := index(Tab)};
                    _ -> State
                end,
     {reply, Reply, NewState};
@@ -301,8 +308,6 @@ contains_val(DataVal, T) when is_tuple(T) -> contains_val(DataVal, tuple_to_list
 contains_val(DataVal, M) when is_map(M) -> contains_val(DataVal, maps:to_list(M));
 contains_val(_, _) -> false.
 
-
-
 index(Tab) ->
     case ets:last(Tab) of
         I when is_integer(I) -> I;
@@ -321,6 +326,58 @@ trace_pattern_and_opts(Mod) when is_atom(Mod) -> trace_pattern_and_opts({Mod, '_
 trace_pattern_and_opts({_, _, _} = MFA) -> {MFA, [local, call_time]};
 trace_pattern_and_opts({Mod, Opts}) when is_atom(Mod) -> {{Mod, '_', '_'}, Opts};
 trace_pattern_and_opts({{_M, _F, _A} = MFA, Opts}) -> {MFA, Opts}.
+
+%% Filter tracebacks
+
+filter_tracebacks_step(PredF, T = #tr{pid = Pid, event = Event},
+                       State = #{traces := Traces, call_stacks := CallStacks}) ->
+    CallStack = maps:get(Pid, CallStacks, []),
+    NewStack = update_call_stack(T, CallStack),
+    NewTraces = case catch PredF(T) of
+                    true when Event =:= call -> [lists:reverse(NewStack)];
+                    true when ?is_return(Event) -> [lists:reverse(CallStack)];
+                    _ -> []
+                end,
+    State#{traces := NewTraces ++ Traces, call_stacks := CallStacks#{Pid => NewStack}}.
+
+update_call_stack(T = #tr{event = call}, Stack) -> [T|Stack];
+update_call_stack(#tr{event = Event, mfa = MFArity}, [#tr{mfa = MFArity} | Stack])
+  when ?is_return(Event) ->
+    Stack;
+update_call_stack(#tr{event = Event, mfa = {M, F, Arity}}, Stack) when ?is_return(Event) ->
+    error_logger:warning_msg("Found a return trace from ~p:~p/~p without a call trace", [M, F, Arity]),
+    Stack.
+
+%% Filter ranges
+
+filter_ranges_step(PredF, T = #tr{pid = Pid}, {Traces, State}) ->
+    PidState = maps:get(Pid, State, no_state),
+    case filter_range(PredF, T, PidState) of
+        {complete, Trace} -> {[Trace | Traces], maps:remove(Pid, State)};
+        {incomplete, NewPidState} -> {Traces, State#{Pid => NewPidState}};
+        none -> {Traces, State}
+    end.
+
+filter_range(_PredF, T = #tr{event = call, mfa = MFArity},
+             State = #{depth := Depth, mfarity := MFArity, trace := Trace}) ->
+    {incomplete, State#{depth => Depth + 1, trace => [T|Trace]}};
+filter_range(_PredF, T = #tr{event = call}, State = #{trace := Trace}) ->
+    {incomplete, State#{trace => [T|Trace]}};
+filter_range(PredF, T = #tr{event = call, mfa = MFArity}, no_state) ->
+    case catch PredF(T) of
+        true -> {incomplete, #{depth => 1, mfarity => MFArity, trace => [T]}};
+        _ -> none
+    end;
+filter_range(_PredF, T = #tr{event = Event, mfa = MFArity},
+             #{depth := 1, mfarity := MFArity, trace := Trace}) when ?is_return(Event) ->
+    {complete, lists:reverse([T|Trace])};
+filter_range(_PredF, T = #tr{event = Event, mfa = MFArity},
+             State = #{depth := Depth, mfarity := MFArity, trace := Trace}) when ?is_return(Event) ->
+    {incomplete, State#{depth => Depth - 1, trace => [T|Trace]}};
+filter_range(_PredF, T = #tr{event = Event}, State = #{trace := Trace}) when ?is_return(Event) ->
+    {incomplete, State#{trace := [T|Trace]}};
+filter_range(_PredF, #tr{event = Event}, no_state) when ?is_return(Event) ->
+    none.
 
 %% Call stat
 
@@ -407,58 +464,6 @@ acc_time_key(_, #tr{}, _) -> no_key.
 own_time_key(#tr{event = call}, LastKey, #tr{}, _) when LastKey =/= no_key -> LastKey;
 own_time_key(_, _, #tr{event = Event}, Key) when ?is_return(Event), Key =/= no_key -> Key;
 own_time_key(_, _, #tr{}, _) -> no_key.
-
-%% Filter tracebacks
-
-filter_tracebacks_step(PredF, T = #tr{pid = Pid, event = Event},
-                       State = #{traces := Traces, call_stacks := CallStacks}) ->
-    CallStack = maps:get(Pid, CallStacks, []),
-    NewStack = update_call_stack(T, CallStack),
-    NewTraces = case catch PredF(T) of
-                    true when Event =:= call -> [lists:reverse(NewStack)];
-                    true when ?is_return(Event) -> [lists:reverse(CallStack)];
-                    _ -> []
-                end,
-    State#{traces := NewTraces ++ Traces, call_stacks := CallStacks#{Pid => NewStack}}.
-
-update_call_stack(T = #tr{event = call}, Stack) -> [T|Stack];
-update_call_stack(#tr{event = Event, mfa = MFArity}, [#tr{mfa = MFArity} | Stack])
-  when ?is_return(Event) ->
-    Stack;
-update_call_stack(#tr{event = Event, mfa = {M, F, Arity}}, Stack) when ?is_return(Event) ->
-    error_logger:warning_msg("Found a return trace from ~p:~p/~p without a call trace", [M, F, Arity]),
-    Stack.
-
-%% Filter ranges
-
-filter_ranges_step(PredF, T = #tr{pid = Pid}, {Traces, State}) ->
-    PidState = maps:get(Pid, State, no_state),
-    case filter_range(PredF, T, PidState) of
-        {complete, Trace} -> {[Trace | Traces], maps:remove(Pid, State)};
-        {incomplete, NewPidState} -> {Traces, State#{Pid => NewPidState}};
-        none -> {Traces, State}
-    end.
-
-filter_range(_PredF, T = #tr{event = call, mfa = MFArity},
-             State = #{depth := Depth, mfarity := MFArity, trace := Trace}) ->
-    {incomplete, State#{depth => Depth + 1, trace => [T|Trace]}};
-filter_range(_PredF, T = #tr{event = call}, State = #{trace := Trace}) ->
-    {incomplete, State#{trace => [T|Trace]}};
-filter_range(PredF, T = #tr{event = call, mfa = MFArity}, no_state) ->
-    case catch PredF(T) of
-        true -> {incomplete, #{depth => 1, mfarity => MFArity, trace => [T]}};
-        _ -> none
-    end;
-filter_range(_PredF, T = #tr{event = Event, mfa = MFArity},
-             #{depth := 1, mfarity := MFArity, trace := Trace}) when ?is_return(Event) ->
-    {complete, lists:reverse([T|Trace])};
-filter_range(_PredF, T = #tr{event = Event, mfa = MFArity},
-             State = #{depth := Depth, mfarity := MFArity, trace := Trace}) when ?is_return(Event) ->
-    {incomplete, State#{depth => Depth - 1, trace => [T|Trace]}};
-filter_range(_PredF, T = #tr{event = Event}, State = #{trace := Trace}) when ?is_return(Event) ->
-    {incomplete, State#{trace := [T|Trace]}};
-filter_range(_PredF, #tr{event = Event}, no_state) when ?is_return(Event) ->
-    none.
 
 %% Helpers
 
