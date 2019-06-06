@@ -382,7 +382,85 @@ ok
 
 ## Example use cases
 
-More advanced examples will be added here soon.
+### Download and start `tr` on a system that is already running
+
+```
+1> P="/tmp/tr.erl", ssl:start(), inets:start(), {ok, {{_, 200, _}, _, Src}} = httpc:request("https://git.io/fj024"), file:write_file(P, Src), {ok, tr, B} = compile:file(P, binary), code:load_binary(tr, P, B), rr(tr), tr:start().
+ok
+```
+
+### Debugging a vague error
+
+While reworking the LDAP connection layer in [MongooseIM](https://github.com/esl/MongooseIM), the following error occured in the logs:
+
+```
+14:46:35.002 [warning] lager_error_logger_h dropped 79 messages in the last second that exceeded the limit of 50 messages/sec
+14:46:35.002 [error] gen_server 'wpool_pool-mongoose_wpool$ldap$global$bind-1' terminated with reason: no case clause matching {badkey,handle} in wpool_process:handle_info/2 line 123
+14:46:35.003 [error] CRASH REPORT Process 'wpool_pool-mongoose_wpool$ldap$global$bind-1' with 1 neighbours crashed with reason: no case clause matching {badkey,handle} in wpool_process:handle_info/2 line 123
+14:46:35.003 [error] Supervisor 'wpool_pool-mongoose_wpool$ldap$global$bind-process-sup' had child 'wpool_pool-mongoose_wpool$ldap$global$bind-1' started with wpool_process:start_link('wpool_pool-mongoose_wpool$ldap$global$bind-1', mongoose_ldap_worker, [{port,3636},{encrypt,tls},{tls_options,[{verify,verify_peer},{cacertfile,"priv/ssl/cacert.pem"},...]}], [{queue_manager,'wpool_pool-mongoose_wpool$ldap$global$bind-queue-manager'},{time_checker,'wpool_pool-mongoose_wpool$ldap$global$bind-time-checker'},...]) at <0.28894.0> exit with reason no case clause matching {badkey,handle} in wpool_process:handle_info/2 line 123 in context child_terminated
+14:46:35.009 [info] Connected to LDAP server
+14:46:35.009 [error] gen_server 'wpool_pool-mongoose_wpool$ldap$global$default-1' terminated with reason: no case clause matching {badkey,handle} in wpool_process:handle_info/2 line 123
+14:46:35.009 [error] CRASH REPORT Process 'wpool_pool-mongoose_wpool$ldap$global$default-1' with 1 neighbours crashed with reason: no case clause matching {badkey,handle} in wpool_process:handle_info/2 line 123
+```
+
+As this messages appear every 10 seconds (on each attempt to reconnect to LDAP), we can start tracing.
+The most lkely culprit is the `mongoose_ldap_worker` module, so let's trace it:
+
+```
+(mongooseim@localhost)16> tr:trace_calls([mongoose_ldap_worker]).
+ok
+```
+
+A few seconds (and error messages) later we can check the traces for the `badkey` value we saw in the logs:
+
+```
+(mongooseim@localhost)17> tr:filter(fun(T) -> tr:contains_data(badkey, T) end).
+[#tr{index = 255,pid = <0.8118.1>,event = exception_from,
+     mfa = {mongoose_ldap_worker,connect,1},
+     data = {error,{badkey,handle}},
+     ts = 1557838064073778},
+     (...)
+```
+
+This means that the key `handle` was missing from a map.
+Let's see the traceback to find the exact place in the code:
+
+```
+(mongooseim@localhost)18> hd(tr:filter_tracebacks(fun(T) -> tr:contains_data(badkey, T) end)).
+[#tr{index = 253,pid = <0.8118.1>,event = call,
+     mfa = {mongoose_ldap_worker,handle_info,2},
+     data = [connect,
+             #{connect_interval => 10000,encrypt => tls,password => <<>>,
+               port => 3636,root_dn => <<>>,
+               servers => ["localhost"],
+               tls_options =>
+                   [{verify,verify_peer},
+                    {cacertfile,"priv/ssl/cacert.pem"},
+                    {certfile,"priv/ssl/fake_cert.pem"},
+                    {keyfile,"priv/ssl/fake_key.pem"}]}],
+     ts = 1557838064052116},
+ #tr{index = 254,pid = <0.8118.1>,event = call,
+     mfa = {mongoose_ldap_worker,connect,1},
+     data = [#{connect_interval => 10000,encrypt => tls,password => <<>>,
+               port => 3636,root_dn => <<>>,
+               servers => ["localhost"],
+               tls_options =>
+                   [{verify,verify_peer},
+                    {cacertfile,"priv/ssl/cacert.pem"},
+                    {certfile,"priv/ssl/fake_cert.pem"},
+                    {keyfile,"priv/ssl/fake_key.pem"}]}],
+     ts = 1557838064052121}]
+```
+
+We can see that the `handle` key is missing from the map passed to `mongoose_ldap_worker:connect/1`.
+After looking at the source code of this function and searching for `handle` we can see only one matching line:
+
+```
+                    State#{handle := Handle};
+```
+
+The `:=` operator assumes that the key is already present int the map.
+The solution would be to either change it to `=>` or ensure that the map already contains that key.
 
 ### Loading traces to `tr` table after tracing to file
 
