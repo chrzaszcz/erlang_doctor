@@ -7,6 +7,7 @@
          start/0, start/1,
          trace_calls/1,
          stop_tracing_calls/0,
+         stop/0,
          tab/0,
          set_tab/1,
          load/1,
@@ -28,7 +29,8 @@
          do/1,
          app_modules/1,
          mfarity/1,
-         mfa/2]).
+         mfa/2,
+         ts/1]).
 
 %% gen_server callbacks
 -export([init/1,
@@ -55,6 +57,13 @@
 -type acc_time() :: non_neg_integer().
 -type own_time() :: non_neg_integer().
 
+-type init_options() :: #{tab => atom(),
+                          index => non_neg_integer(),
+                          limit => pos_integer()}.
+
+-type filter_ranges_options() :: #{tab => atom() | [tr()],
+                                   max_depth => infinity | pos_integer()}.
+
 %% API - capturing, data manipulation
 
 -spec start_link() -> {ok, pid()}.
@@ -69,7 +78,7 @@ start_link(Opts) ->
 start() ->
     start(#{}).
 
--spec start(map()) -> {ok, pid()}.
+-spec start(init_options()) -> {ok, pid()}.
 start(Opts) ->
     gen_server:start({local, ?MODULE}, ?MODULE, Opts, []).
 
@@ -82,6 +91,10 @@ trace_calls(Modules) ->
 -spec stop_tracing_calls() -> ok.
 stop_tracing_calls() ->
     gen_server:call(?MODULE, {stop_trace, call}).
+
+-spec stop() -> ok.
+stop() ->
+    gen_server:stop(?MODULE).
 
 -spec tab() -> atom().
 tab() ->
@@ -143,11 +156,13 @@ filter_tracebacks(PredF, Tab) ->
 %% Returns ranges (subtrees): [Call, ..., Return] when PredF(Call)
 -spec filter_ranges(pred()) -> [[tr()]].
 filter_ranges(PredF) ->
-    filter_ranges(PredF, tab()).
+    filter_ranges(PredF, #{}).
 
--spec filter_ranges(pred(), atom() | [tr()]) -> [[tr()]].
-filter_ranges(PredF, Tab) ->
-    {Traces, #{}} = foldl(fun(T, S) -> filter_ranges_step(PredF, T, S) end, {[], #{}}, Tab),
+-spec filter_ranges(pred(), filter_ranges_options()) -> [[tr()]].
+filter_ranges(PredF, Options) when is_map(Options) ->
+    Tab = maps:get(tab, Options, tab()),
+    InitialState = maps:merge(#{traces => [], pid_states => #{}, max_depth => infinity}, Options),
+    #{traces := Traces} = foldl(fun(T, S) -> filter_ranges_step(PredF, T, S) end, InitialState, Tab),
     lists:reverse(Traces).
 
 -spec print_sorted_call_stat(selector(), pos_integer()) -> ok.
@@ -203,27 +218,26 @@ mfarity({M, F, A}) -> {M, F, maybe_length(A)}.
                                                     Args :: list().
 mfa({M, F, Arity}, Args) when length(Args) =:= Arity -> {M, F, Args}.
 
+-spec ts(tr()) -> string().
+ts(#tr{ts = TS}) -> calendar:system_time_to_rfc3339(TS, [{unit, microsecond}]).
+
 %% gen_server callbacks
 
--spec init(map()) -> {ok, map()}.
+-spec init(init_options()) -> {ok, map()}.
 init(Opts) ->
-    DefaultState = #{tab => default_tab(), index => initial_index(), traced_modules => []},
+    DefaultState = #{tab => default_tab(), index => initial_index(), traced_modules => [], limit => infinity},
     State = #{tab := Tab} = maps:merge(DefaultState, Opts),
     create_tab(Tab),
     {ok, maps:merge(State, Opts)}.
 
 -spec handle_call(any(), {pid(), any()}, map()) -> {reply, ok, map()}.
 handle_call({start_trace, call, Modules}, _From, State = #{traced_modules := []}) ->
-    [enable_trace_pattern(Mod) || Mod <- Modules],
-    erlang:trace(all, true, [call, timestamp]),
-    {reply, ok, State#{traced_modules := Modules}};
-handle_call({stop_trace, call}, _From, State = #{traced_modules := Modules}) ->
-    erlang:trace(all, false, [call, timestamp]),
-    [disable_trace_pattern(Mod) || Mod <- Modules],
-    {reply, ok, State#{traced_modules := []}};
+    {reply, ok, start_trace(State, Modules)};
+handle_call({stop_trace, call}, _From, State) ->
+    {reply, ok, stop_trace(State)};
 handle_call(clean, _From, State = #{tab := Tab}) ->
     ets:delete_all_objects(Tab),
-    {reply, ok, State};
+    {reply, ok, State#{index := index(Tab)}};
 handle_call({dump, File}, _From, State = #{tab := Tab}) ->
     Reply = ets:tab2file(Tab, File),
     {reply, Reply, State};
@@ -250,30 +264,16 @@ handle_cast(Msg, State) ->
 
 -spec handle_info(any(), map()) -> {noreply, map()}.
 
+handle_info(Trace, State = #{traced_modules := []}) when ?is_trace(Trace) ->
+    {noreply, State};
+handle_info(Trace, State = #{index := I, limit := Limit}) when ?is_trace(Trace), I >= Limit ->
+    error_logger:warning_msg("Reached trace limit ~p, stopping the tracer.", [Limit]),
+    {noreply, stop_trace(State)};
 handle_info(Trace, State) when ?is_trace(Trace) ->
     {noreply, handle_trace(Trace, State)};
 handle_info(Msg, State) ->
     error_logger:error_msg("Unexpected message ~p.", [Msg]),
     {noreply, State}.
-
-handle_trace({trace_ts, Pid, call, MFA = {_, _, Args}, TS}, #{tab := Tab, index := I} = State) ->
-    NextIndex = next_index(I),
-    ets:insert(Tab, #tr{index = NextIndex, pid = Pid, event = call, mfa = mfarity(MFA), data = Args,
-                        ts = usec_from_now(TS)}),
-    State#{index := NextIndex};
-handle_trace({trace_ts, Pid, return_from, MFArity, Res, TS}, #{tab := Tab, index := I} = State) ->
-    NextIndex = next_index(I),
-    ets:insert(Tab, #tr{index = NextIndex, pid = Pid, event = return_from, mfa = MFArity, data = Res,
-                        ts = usec_from_now(TS)}),
-    State#{index := NextIndex};
-handle_trace({trace_ts, Pid, exception_from, MFArity, {Class, Value}, TS}, #{tab := Tab, index := I} = State) ->
-    NextIndex = next_index(I),
-    ets:insert(Tab, #tr{index = NextIndex, pid = Pid, event = exception_from, mfa = MFArity, data = {Class, Value},
-                        ts = usec_from_now(TS)}),
-    State#{index := NextIndex};
-handle_trace(Msg, State) ->
-    error_logger:error_msg("Unexpected message ~p.", [Msg]),
-    State.
 
 -spec terminate(any(), map()) -> ok.
 terminate(_Reason, #{}) ->
@@ -314,6 +314,16 @@ index(Tab) ->
         _ -> initial_index()
     end.
 
+start_trace(State, Modules) ->
+    [enable_trace_pattern(Mod) || Mod <- Modules],
+    erlang:trace(all, true, [call, timestamp]),
+    State#{traced_modules := Modules}.
+
+stop_trace(State = #{traced_modules := Modules}) ->
+    erlang:trace(all, false, [call, timestamp]),
+    [disable_trace_pattern(Mod) || Mod <- Modules],
+    State#{traced_modules := []}.
+
 enable_trace_pattern(Mod) ->
     {MFA, Opts} = trace_pattern_and_opts(Mod),
     erlang:trace_pattern(MFA, [{'_', [], [{exception_trace}]}], Opts).
@@ -326,6 +336,25 @@ trace_pattern_and_opts(Mod) when is_atom(Mod) -> trace_pattern_and_opts({Mod, '_
 trace_pattern_and_opts({_, _, _} = MFA) -> {MFA, [local, call_time]};
 trace_pattern_and_opts({Mod, Opts}) when is_atom(Mod) -> {{Mod, '_', '_'}, Opts};
 trace_pattern_and_opts({{_M, _F, _A} = MFA, Opts}) -> {MFA, Opts}.
+
+handle_trace({trace_ts, Pid, call, MFA = {_, _, Args}, TS}, #{tab := Tab, index := I} = State) ->
+    NextIndex = next_index(I),
+    ets:insert(Tab, #tr{index = NextIndex, pid = Pid, event = call, mfa = mfarity(MFA), data = Args,
+                        ts = usec_from_now(TS)}),
+    State#{index := NextIndex};
+handle_trace({trace_ts, Pid, return_from, MFArity, Res, TS}, #{tab := Tab, index := I} = State) ->
+    NextIndex = next_index(I),
+    ets:insert(Tab, #tr{index = NextIndex, pid = Pid, event = return_from, mfa = MFArity, data = Res,
+                        ts = usec_from_now(TS)}),
+    State#{index := NextIndex};
+handle_trace({trace_ts, Pid, exception_from, MFArity, {Class, Value}, TS}, #{tab := Tab, index := I} = State) ->
+    NextIndex = next_index(I),
+    ets:insert(Tab, #tr{index = NextIndex, pid = Pid, event = exception_from, mfa = MFArity, data = {Class, Value},
+                        ts = usec_from_now(TS)}),
+    State#{index := NextIndex};
+handle_trace(Trace, State) ->
+    error_logger:error_msg("Unexpected trace message ~p.", [Trace]),
+    State.
 
 %% Filter tracebacks
 
@@ -350,33 +379,32 @@ update_call_stack(#tr{event = Event, mfa = {M, F, Arity}}, Stack) when ?is_retur
 
 %% Filter ranges
 
-filter_ranges_step(PredF, T = #tr{pid = Pid}, {Traces, State}) ->
-    PidState = maps:get(Pid, State, no_state),
-    case filter_range(PredF, T, PidState) of
-        {complete, Trace} -> {[Trace | Traces], maps:remove(Pid, State)};
-        {incomplete, NewPidState} -> {Traces, State#{Pid => NewPidState}};
-        none -> {Traces, State}
+filter_ranges_step(PredF, T = #tr{pid = Pid}, State = #{traces := Traces, pid_states := States, max_depth := MaxDepth}) ->
+    PidState = maps:get(Pid, States, no_state),
+    case filter_range(PredF, T, PidState, MaxDepth) of
+        {complete, Trace} -> State#{traces := [Trace | Traces], pid_states := maps:remove(Pid, States)};
+        {incomplete, NewPidState} -> State#{pid_states := States#{Pid => NewPidState}};
+        none -> State
     end.
 
-filter_range(_PredF, T = #tr{event = call, mfa = MFArity},
-             State = #{depth := Depth, mfarity := MFArity, trace := Trace}) ->
+filter_range(_PredF, T = #tr{event = call}, State = #{depth := Depth, trace := Trace}, MaxDepth)
+  when Depth < MaxDepth ->
     {incomplete, State#{depth => Depth + 1, trace => [T|Trace]}};
-filter_range(_PredF, T = #tr{event = call}, State = #{trace := Trace}) ->
-    {incomplete, State#{trace => [T|Trace]}};
-filter_range(PredF, T = #tr{event = call, mfa = MFArity}, no_state) ->
+filter_range(_PredF, #tr{event = call}, State = #{depth := Depth, trace := Trace}, _) ->
+    {incomplete, State#{depth => Depth + 1, trace => Trace}};
+filter_range(PredF, T = #tr{event = call}, no_state, _) ->
     case catch PredF(T) of
-        true -> {incomplete, #{depth => 1, mfarity => MFArity, trace => [T]}};
+        true -> {incomplete, #{depth => 1, trace => [T]}};
         _ -> none
     end;
-filter_range(_PredF, T = #tr{event = Event, mfa = MFArity},
-             #{depth := 1, mfarity := MFArity, trace := Trace}) when ?is_return(Event) ->
+filter_range(_PredF, T = #tr{event = Event}, #{depth := 1, trace := Trace}, _) when ?is_return(Event) ->
     {complete, lists:reverse([T|Trace])};
-filter_range(_PredF, T = #tr{event = Event, mfa = MFArity},
-             State = #{depth := Depth, mfarity := MFArity, trace := Trace}) when ?is_return(Event) ->
+filter_range(_PredF, T = #tr{event = Event}, State = #{depth := Depth, trace := Trace}, MaxDepth)
+  when ?is_return(Event), Depth =< MaxDepth ->
     {incomplete, State#{depth => Depth - 1, trace => [T|Trace]}};
-filter_range(_PredF, T = #tr{event = Event}, State = #{trace := Trace}) when ?is_return(Event) ->
-    {incomplete, State#{trace := [T|Trace]}};
-filter_range(_PredF, #tr{event = Event}, no_state) when ?is_return(Event) ->
+filter_range(_PredF, #tr{event = Event}, State = #{depth := Depth, trace := Trace}, _) when ?is_return(Event) ->
+    {incomplete, State#{depth => Depth - 1, trace => Trace}};
+filter_range(_PredF, #tr{event = Event}, no_state, _) when ?is_return(Event) ->
     none.
 
 %% Call stat

@@ -20,7 +20,8 @@ The first thing to do is to start the tracer with `tr:start/1`.
 There is `tr:start_link/1` as well, but it is intended for use with the whole `erlang_doctor` application.
 Both functions can also take a second argument, which is a map with more advanced options:
 
-- `tab`: collected traces are stored in an ETS table with this name (default: `trace`)
+- `tab`: collected traces are stored in an ETS table with this name (default: `trace`),
+- `limit`: maximum number of traces in the table - when it is reached, tracing is stopped.
 
 In this example we start the `tr` module in the simplest way:
 
@@ -224,7 +225,7 @@ There is also `tr:filter_tracebacks/2` which works like `tr:filter/2`.
 
 #### Trace ranges for filtered traces: `filter_ranges`
 
-To get the whole traces between the matching call and the corresponding return, use `tr:filter_ranges/2`:
+To get the whole traces between the matching call and the corresponding return, use `tr:filter_ranges/1`:
 
 ```
 14> tr:filter_ranges(fun(#tr{data=[1]}) -> true end).
@@ -243,6 +244,12 @@ To get the whole traces between the matching call and the corresponding return, 
       mfa = {tr_SUITE,sleepy_factorial,1},
       data = 1,ts = 1559134178225153}]]
 ```
+
+There is also `tr:filter_ranges/2` - it accepts a map of options with the following keys:
+
+- `tab` is the table or list which is like the second argument of `tr:filter/2`,
+- `max_depth` is the maximum depth of nested calls. You can use `#{max_depth => 1}`
+   to see only the top-level call and the corresponding return.
 
 #### Calling function from a trace: `do`
 
@@ -380,6 +387,8 @@ Finally, you can remove all traces from the ETS table with `tr:clean/1`.
 ok
 ```
 
+To stop `tr`, just call `tr:stop/0`.
+
 ## Example use cases
 
 ### Download and start `tr` on a system that is already running
@@ -459,7 +468,7 @@ After looking at the source code of this function and searching for `handle` we 
                     State#{handle := Handle};
 ```
 
-The `:=` operator assumes that the key is already present int the map.
+The `:=` operator assumes that the key is already present in the map.
 The solution would be to either change it to `=>` or ensure that the map already contains that key.
 
 ### Loading traces to `tr` table after tracing to file
