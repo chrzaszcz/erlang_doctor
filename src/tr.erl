@@ -201,10 +201,10 @@ do(#tr{event = call, mfa = {M, F, Arity}, data = Args}) when length(Args) =:= Ar
 
 -spec app_modules(atom()) -> [atom()].
 app_modules(AppName) ->
-    AppNameStr = atom_to_list(AppName),
-    [P]=lists:filter(fun(Path) -> string:str(Path, AppNameStr) > 0 end, code:get_path()),
-    {ok, FileNames} = file:list_dir(P),
-    [list_to_atom(lists:takewhile(fun(C) -> C =/= $. end, Name)) || Name <- FileNames].
+    Path = code:lib_dir(AppName, ebin),
+    {ok, FileNames} = file:list_dir(Path),
+    BeamFileNames = lists:filter(fun(Name) -> filename:extension(Name) =:= ".beam" end, FileNames),
+    [list_to_atom(filename:rootname(Name)) || Name <- BeamFileNames].
 
 -spec mfarity({M, F, Arity | Args}) -> {M, F, Arity} when M :: atom(),
                                                           F :: atom(),
