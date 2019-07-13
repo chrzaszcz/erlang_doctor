@@ -1,0 +1,13 @@
+language: erlang
+
+before_script:
+   kerl update releases && kerl list releases
+  
+script:
+  rebar3 ct
+
+otp_release:
+  - 19.0
+  - 20.2
+  - 21.0
+  - 22.0
