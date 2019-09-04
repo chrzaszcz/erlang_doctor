@@ -367,7 +367,7 @@ You can dump a table to file with `tr:dump/2` - let's dump the `tmp` table:
 ok
 ```
 
-In a new Erlang session we can load the data with `tr:load/2`. This will set the current table name to `tmp`.
+In a new Erlang session we can load the data with `tr:load/1`. This will set the current table name to `tmp`.
 
 ```
 1> tr:start().

@@ -292,7 +292,9 @@ create_tab(Tab) ->
 select(_MS, _DataVal, DataAcc, '$end_of_table') ->
     lists:append(lists:reverse(DataAcc));
 select(MS, DataVal, DataAcc, {Matched, Cont}) ->
-    Filtered = lists:filter(fun(T) -> contains_data(DataVal, T) end, Matched),
+    Filtered = lists:filter(fun(#tr{data = Data}) -> contains_val(DataVal, Data);
+                               (T) -> contains_val(DataVal, T)
+                            end, Matched),
     SelectRes = ets:select(Cont),
     select(MS, DataVal, [Filtered | DataAcc], SelectRes).
 
