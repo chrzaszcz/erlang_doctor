@@ -316,18 +316,19 @@ index(Tab) ->
         _ -> initial_index()
     end.
 
-start_trace(State, Modules) ->
-    [enable_trace_pattern(Mod) || Mod <- Modules],
+start_trace(State, ModSpecs) ->
+    [enable_trace_pattern(ModSpec) || ModSpec <- ModSpecs],
     erlang:trace(all, true, [call, timestamp]),
-    State#{traced_modules := Modules}.
+    State#{traced_modules := ModSpecs}.
 
-stop_trace(State = #{traced_modules := Modules}) ->
+stop_trace(State = #{traced_modules := ModSpecs}) ->
     erlang:trace(all, false, [call, timestamp]),
-    [disable_trace_pattern(Mod) || Mod <- Modules],
+    [disable_trace_pattern(ModSpec) || ModSpec <- ModSpecs],
     State#{traced_modules := []}.
 
-enable_trace_pattern(Mod) ->
-    {MFA, Opts} = trace_pattern_and_opts(Mod),
+enable_trace_pattern(ModSpec) ->
+    {MFA = {M, _, _}, Opts} = trace_pattern_and_opts(ModSpec),
+    {module, _} = code:ensure_loaded(M),
     erlang:trace_pattern(MFA, [{'_', [], [{exception_trace}]}], Opts).
 
 disable_trace_pattern(Mod) ->
