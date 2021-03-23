@@ -1,6 +1,8 @@
+[![GitHub Actions](https://github.com/chrzaszcz/erlang_doctor/actions/workflows/test.yml/badge.svg)](https://github.com/chrzaszcz/erlang_doctor/actions)
+
 # erlang_doctor
 
-Lightweight tracing, debuging and profiling utility for Erlang.
+Lightweight tracing, debugging and profiling utility for Erlang.
 
 ## Usage
 
