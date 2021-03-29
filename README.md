@@ -4,7 +4,7 @@ Lightweight tracing, debugging and profiling utility for Erlang.
 
 ## Use it now in your Erlang shell
 
-Copy & paste the following to your Erlang shell.
+To quickly try it out without including it as a dependency, copy & paste the following to your Erlang shell.
 
 ```erlang
 P = "/tmp/tr.erl", ssl:start(), inets:start(), {ok, {{_, 200, _}, _, Src}} = httpc:request("https://git.io/fj024"), file:write_file(P, Src), {ok, tr, B} = compile:file(P, binary), code:load_binary(tr, P, B), rr(tr), tr:start().
