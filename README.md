@@ -192,58 +192,103 @@ There is also `tr:filter/2` which can be used to search in a different table tha
      ts = 1559134178219102}]
 ```
 
-### Tracebacks for filtered traces: `filter_tracebacks`
+### Tracebacks for filtered traces: `tracebacks`
 
-To find the traceback (call stack trace) for matching traces, use `tr:filter_tracebacks/1`:
+To find the tracebacks (call stacks) for matching traces, use `tr:tracebacks/1`:
 
 ```erlang
-12> Tracebacks = tr:filter_tracebacks(fun(#tr{data = 1}) -> true end).
-[[#tr{index = 1, pid = <0.175.0>, event = call,
-      mfa = {tr_SUITE, sleepy_factorial, 1},
-      data = [3],
-      ts = 1559134178217371},
-  #tr{index = 2, pid = <0.175.0>, event = call,
-      mfa = {tr_SUITE, sleepy_factorial, 1},
-      data = [2],
-      ts = 1559134178219102},
-  #tr{index = 3, pid = <0.175.0>, event = call,
-      mfa = {tr_SUITE, sleepy_factorial, 1},
+12> tr:tracebacks(fun(#tr{data = 1}) -> true end).
+[[#tr{index = 5,pid = <0.219.0>,event = call,
+      mfa = {tr_SUITE,sleepy_factorial,1},
       data = [1],
-      ts = 1559134178221192},
-  #tr{index = 4, pid = <0.175.0>, event = call,
-      mfa = {tr_SUITE, sleepy_factorial, 1},
-      data = [0],
-      ts = 1559134178223107}],
- [#tr{index = 1, pid = <0.175.0>, event = call,
-      mfa = {tr_SUITE, sleepy_factorial, 1},
-      data = [3],
-      ts = 1559134178217371},
-  #tr{index = 2, pid = <0.175.0>, event = call,
-      mfa = {tr_SUITE, sleepy_factorial, 1},
+      ts = 1617097424677636},
+  #tr{index = 4,pid = <0.219.0>,event = call,
+      mfa = {tr_SUITE,sleepy_factorial,1},
       data = [2],
-      ts = 1559134178219102},
-  #tr{index = 3, pid = <0.175.0>, event = call,
-      mfa = {tr_SUITE, sleepy_factorial, 1},
-      data = [1],
-      ts = 1559134178221192}]]
+      ts = 1617097424675625},
+  #tr{index = 3,pid = <0.219.0>,event = call,
+      mfa = {tr_SUITE,sleepy_factorial,1},
+      data = [3],
+      ts = 1617097424674397}]]
 ```
 
 Note that by specifying `data = 1` we are only matching return traces as call traces always have a list in `data`.
-We got two tracebacks (see the nested lists) as there were two function calls which returned the value `1`.
+Only one traceback is returned. It starts with a matching call that returned `1`. What follows is the call stack
+for this call.
+
+One can notice that the call for 0 also returned 1, but the call tree gets pruned - whenever two tracebacks overlap, only the shorter one is left.
+You can change this by returning tracebacks for all matching traces even if they overlap, setting the `output` option to `all`. All options are included in the second argument, which is a map:
 
 ```erlang
-13> [[N || #tr{data=[N]} <- TB] || TB <- Tracebacks].
-[[3, 2, 1, 0], [3, 2, 1]]
+13> tr:tracebacks(fun(#tr{data = 1}) -> true end, #{output => all}).
+[[#tr{index = 6,pid = <0.219.0>,event = call,
+      mfa = {tr_SUITE,sleepy_factorial,1},
+      data = [0],
+      ts = 1617099584113726},
+  #tr{index = 5,pid = <0.219.0>,event = call,
+      mfa = {tr_SUITE,sleepy_factorial,1},
+      data = [1],
+      ts = 1617099584111714},
+  #tr{index = 4,pid = <0.219.0>,event = call,
+      mfa = {tr_SUITE,sleepy_factorial,1},
+      data = [2],
+      ts = 1617099584109773},
+  #tr{index = 3,pid = <0.219.0>,event = call,
+      mfa = {tr_SUITE,sleepy_factorial,1},
+      data = [3],
+      ts = 1617099584108006}],
+ [#tr{index = 5,pid = <0.219.0>,event = call,
+      mfa = {tr_SUITE,sleepy_factorial,1},
+      data = [1],
+      ts = 1617099584111714},
+  #tr{index = 4,pid = <0.219.0>,event = call,
+      mfa = {tr_SUITE,sleepy_factorial,1},
+      data = [2],
+      ts = 1617099584109773},
+  #tr{index = 3,pid = <0.219.0>,event = call,
+      mfa = {tr_SUITE,sleepy_factorial,1},
+      data = [3],
+      ts = 1617099584108006}]]
 ```
 
-There is also `tr:filter_tracebacks/2` which works like `tr:filter/2`.
-
-### Trace ranges for filtered traces: `filter_ranges`
-
-To get the whole traces between the matching call and the corresponding return, use `tr:filter_ranges/1`:
+The third possibility is `output => leaves` which does the opposite of pruning, leaving only the longest tracabecks when they overlap:
 
 ```erlang
-14> tr:filter_ranges(fun(#tr{data=[1]}) -> true end).
+32> tr:tracebacks(fun(#tr{data = 1}) -> true end, #{output => longest}).
+[[#tr{index = 6,pid = <0.219.0>,event = call,
+      mfa = {tr_SUITE,sleepy_factorial,1},
+      data = [0],
+      ts = 1617099584113726},
+  #tr{index = 5,pid = <0.219.0>,event = call,
+      mfa = {tr_SUITE,sleepy_factorial,1},
+      data = [1],
+      ts = 1617099584111714},
+  #tr{index = 4,pid = <0.219.0>,event = call,
+      mfa = {tr_SUITE,sleepy_factorial,1},
+      data = [2],
+      ts = 1617099584109773},
+  #tr{index = 3,pid = <0.219.0>,event = call,
+      mfa = {tr_SUITE,sleepy_factorial,1},
+      data = [3],
+      ts = 1617099584108006}]]
+```
+
+All possible options for `tracebacks/2`:
+
+- `tab` is the table or list which is like the second argument of `tr:filter/2`,
+- `output` - `shortest` (default), `all`, `longest` - see above.
+- `format` - `list` (default), `tree` - makes it possible to return the traces in form of a call tree instead of a list of tracebacks. Trees don't distinguish between `all` and `longest` output formats.
+- `order` - `top_down` (default), `bottom_up`. Changes call order in each tracaback, only for the `list` format.
+- `limit` - positive integer or `infinity` (default). Limits the number of matched traces. The actual number of tracebacks returned can be less unless `output => all`
+
+There are also functions: `traceback/1` and `traceback/2`. They set `limit` to one and return only one trace if it exists. The options for ``traceback/2` are the same as for `traceback/2` except `limit` and `format`. Additionaly, it is possible to pass a `tr` record directly to `traceback/1` to obtain the traceback for the provided trace event.
+
+### Trace ranges for filtered traces: `ranges`
+
+To get the whole traces between the matching call and the corresponding return, use `tr:ranges/1`:
+
+```erlang
+14> tr:ranges(fun(#tr{data=[1]}) -> true end).
 [[#tr{index = 3, pid = <0.175.0>, event = call,
       mfa = {tr_SUITE, sleepy_factorial, 1},
       data = [1],
@@ -260,11 +305,13 @@ To get the whole traces between the matching call and the corresponding return, 
       data = 1, ts = 1559134178225153}]]
 ```
 
-There is also `tr:filter_ranges/2` - it accepts a map of options with the following keys:
+There is also `tr:ranges/2` - it accepts a map of options with the following keys:
 
 - `tab` is the table or list which is like the second argument of `tr:filter/2`,
 - `max_depth` is the maximum depth of nested calls. You can use `#{max_depth => 1}`
    to see only the top-level call and the corresponding return.
+
+There are two additional function: `tr:range/1` and `tr:range/2`, which return only one range if it exists. It is possible to pass a `tr` record to `tr:range/1` as well.
 
 ### Calling function from a trace: `do`
 
@@ -443,20 +490,8 @@ This means that the key `handle` was missing from a map.
 Let's see the traceback to find the exact place in the code:
 
 ```erlang
-(mongooseim@localhost)18> hd(tr:filter_tracebacks(fun(T) -> tr:contains_data(badkey, T) end)).
-[#tr{index = 253, pid = <0.8118.1>, event = call,
-     mfa = {mongoose_ldap_worker, handle_info, 2},
-     data = [connect,
-             #{connect_interval => 10000, encrypt => tls, password => <<>>,
-               port => 3636, root_dn => <<>>,
-               servers => ["localhost"],
-               tls_options =>
-                   [{verify, verify_peer},
-                    {cacertfile, "priv/ssl/cacert.pem"},
-                    {certfile, "priv/ssl/fake_cert.pem"},
-                    {keyfile, "priv/ssl/fake_key.pem"}]}],
-     ts = 1557838064052116},
- #tr{index = 254, pid = <0.8118.1>, event = call,
+(mongooseim@localhost)18> tr:traceback(fun(T) -> tr:contains_data(badkey, T) end).
+[#tr{index = 254, pid = <0.8118.1>, event = call,
      mfa = {mongoose_ldap_worker, connect, 1},
      data = [#{connect_interval => 10000, encrypt => tls, password => <<>>,
                port => 3636, root_dn => <<>>,
@@ -466,7 +501,7 @@ Let's see the traceback to find the exact place in the code:
                     {cacertfile, "priv/ssl/cacert.pem"},
                     {certfile, "priv/ssl/fake_cert.pem"},
                     {keyfile, "priv/ssl/fake_key.pem"}]}],
-     ts = 1557838064052121}]
+     ts = 1557838064052121}, ...]
 ```
 
 We can see that the `handle` key is missing from the map passed to `mongoose_ldap_worker:connect/1`.

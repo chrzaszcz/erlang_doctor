@@ -17,8 +17,10 @@
 %% API - analysis
 -export([select/0, select/1, select/2,
          filter/1, filter/2,
-         filter_tracebacks/1, filter_tracebacks/2,
-         filter_ranges/1, filter_ranges/2,
+         traceback/1, traceback/2,
+         tracebacks/1, tracebacks/2,
+         range/1, range/2,
+         ranges/1, ranges/2,
          print_sorted_call_stat/2,
          sorted_call_stat/1,
          call_stat/1, call_stat/2]).
@@ -59,10 +61,23 @@
 
 -type init_options() :: #{tab => atom(),
                           index => non_neg_integer(),
-                          limit => pos_integer()}.
+                          limit => infinity | pos_integer()}.
 
--type filter_ranges_options() :: #{tab => atom() | [tr()],
-                                   max_depth => infinity | pos_integer()}.
+-type range_options() :: #{tab => atom() | [tr()],
+                           max_depth => infinity | pos_integer()}.
+
+-type tb_options() :: #{tab => atom() | [tr()],
+                        output => tb_output(),
+                        format => tb_format(),
+                        order => tb_order(),
+                        limit => infinity | pos_integer()}.
+-type tb_output() :: shortest | longest | all.
+-type tb_format() :: tree | list.
+-type tb_order() :: top_down | bottom_up.
+-type tb_tree() :: [tr() | {tr(), tb_tree()}].
+-type tb_acc_tree() :: [{tr(), tb_acc_tree()}].
+-type tb_acc_list() :: [[tr()]].
+-type tb_acc() :: tb_acc_tree() | tb_acc_list().
 
 %% API - capturing, data manipulation
 
@@ -141,28 +156,54 @@ filter(F, Tab) ->
     Traces = foldl(fun(Tr, State) -> filter_trace(F, Tr, State) end, [], Tab),
     lists:reverse(Traces).
 
-%% Returns tracebacks: [Call1, ..., CallN] when PredF(CallN)
--spec filter_tracebacks(pred()) -> [[tr()]].
-filter_tracebacks(PredF) ->
-    filter_tracebacks(PredF, tab()).
+-spec traceback(pred() | tr()) -> [tr()].
+traceback(T = #tr{}) ->
+    traceback(fun(Tr) -> Tr =:= T end);
+traceback(PredF) ->
+    traceback(PredF, #{}).
 
--spec filter_tracebacks(pred(), atom() | [tr()]) -> [[tr()]].
-filter_tracebacks(PredF, Tab) ->
-    InitialState = #{traces => [], call_stacks => #{}},
-    #{traces := Traces} =
-        foldl(fun(T, State) -> filter_tracebacks_step(PredF, T, State) end, InitialState, Tab),
-    lists:reverse(Traces).
+-spec traceback(pred(), tb_options()) -> [tr()].
+traceback(PredF, Options) ->
+    [TB] = tracebacks(PredF, Options#{limit => 1, format => list}),
+    TB.
 
-%% Returns ranges (subtrees): [Call, ..., Return] when PredF(Call)
--spec filter_ranges(pred()) -> [[tr()]].
-filter_ranges(PredF) ->
-    filter_ranges(PredF, #{}).
+%% Returns tracebacks: [CallN, ..., Call1] when PredF(CallN)
+-spec tracebacks(pred()) -> [[tr()]] | tb_tree().
+tracebacks(PredF) ->
+    tracebacks(PredF, #{}).
 
--spec filter_ranges(pred(), filter_ranges_options()) -> [[tr()]].
-filter_ranges(PredF, Options) when is_map(Options) ->
+-spec tracebacks(pred(), tb_options()) -> [[tr()]] | tb_tree().
+tracebacks(PredF, Options) when is_map(Options) ->
+    Tab = maps:get(tab, Options, tab()),
+    Output = maps:get(output, Options, shortest),
+    Format = maps:get(format, Options, list),
+    Limit = maps:get(limit, Options, infinity),
+    InitialState = #{tbs => [], call_stacks => #{},
+                     output => Output, format => Format,
+                     count => 0, limit => Limit},
+    #{tbs := TBs} =
+        foldl(fun(T, State) -> tb_step(PredF, T, State) end, InitialState, Tab),
+    finalize_tracebacks(TBs, Output, Format, Options).
+
+-spec range(pred() | tr()) -> [tr()].
+range(T = #tr{}) ->
+    range(fun(Tr) -> Tr =:= T end);
+range(PredF) ->
+    range(PredF, #{}).
+
+range(PredF, Options) ->
+    hd(ranges(PredF, Options)).
+
+%% Returns ranges (trace sections for the given Pid): [Call, ..., Return] when PredF(Call)
+-spec ranges(pred()) -> [[tr()]].
+ranges(PredF) ->
+    ranges(PredF, #{}).
+
+-spec ranges(pred(), range_options()) -> [[tr()]].
+ranges(PredF, Options) when is_map(Options) ->
     Tab = maps:get(tab, Options, tab()),
     InitialState = maps:merge(#{traces => [], pid_states => #{}, max_depth => infinity}, Options),
-    #{traces := Traces} = foldl(fun(T, S) -> filter_ranges_step(PredF, T, S) end, InitialState, Tab),
+    #{traces := Traces} = foldl(fun(T, S) -> range_step(PredF, T, S) end, InitialState, Tab),
     lists:reverse(Traces).
 
 -spec print_sorted_call_stat(selector(), pos_integer()) -> ok.
@@ -361,17 +402,25 @@ handle_trace(Trace, State) ->
 
 %% Filter tracebacks
 
-filter_tracebacks_step(PredF, T = #tr{pid = Pid, event = Event},
-                       State = #{traces := Traces, call_stacks := CallStacks}) ->
+-spec tb_step(pred(), tr(), map()) -> map().
+tb_step(PredF, T = #tr{pid = Pid, event = Event},
+        State = #{tbs := TBs, call_stacks := CallStacks, output := Output, format := Format,
+                  count := Count, limit := Limit}) ->
     CallStack = maps:get(Pid, CallStacks, []),
     NewStack = update_call_stack(T, CallStack),
-    NewTraces = case catch PredF(T) of
-                    true when Event =:= call -> [lists:reverse(NewStack)];
-                    true when ?is_return(Event) -> [lists:reverse(CallStack)];
-                    _ -> []
-                end,
-    State#{traces := NewTraces ++ Traces, call_stacks := CallStacks#{Pid => NewStack}}.
+    NewState = State#{call_stacks := CallStacks#{Pid => NewStack}},
+    case catch PredF(T) of
+        true when Count < Limit ->
+            TB = if Event =:= call -> NewStack;
+                    ?is_return(Event) -> CallStack
+                 end,
+            NewState#{tbs := add_tb(lists:reverse(TB), TBs, Output, Format),
+                      count := Count + 1};
+        _ ->
+            NewState
+    end.
 
+-spec update_call_stack(tr(), [tr()]) -> [tr()].
 update_call_stack(T = #tr{event = call}, Stack) -> [T|Stack];
 update_call_stack(#tr{event = Event, mfa = MFArity}, [#tr{mfa = MFArity} | Stack])
   when ?is_return(Event) ->
@@ -380,9 +429,47 @@ update_call_stack(#tr{event = Event, mfa = {M, F, Arity}}, Stack) when ?is_retur
     error_logger:warning_msg("Found a return trace from ~p:~p/~p without a call trace", [M, F, Arity]),
     Stack.
 
+-spec add_tb([tr()], tb_acc(), tb_output(), tb_format()) -> tb_acc().
+add_tb(TB, TBs, all, list) -> [TB | TBs]; %% The only case which uses a list of TBs
+add_tb([], _Tree, shortest, _) -> []; %% Other cases use a tree
+add_tb([], Tree, Output, _Format) when Output =:= longest;
+                                       Output =:= all -> Tree;
+add_tb([Call | Rest], Tree, Output, Format) ->
+    case lists:keyfind(Call, 1, Tree) of
+        {Call, SubTree} ->
+            lists:keyreplace(Call, 1, Tree, {Call, add_tb(Rest, SubTree, Output, Format)});
+        false ->
+            [{Call, add_tb(Rest, [], Output, Format)} | Tree]
+    end.
+
+-spec finalize_tracebacks(tb_acc(), tb_output(), tb_format(), tb_options()) ->
+          tb_tree() | [[tr()]].
+finalize_tracebacks(TBs, all, list, Options) ->
+    reorder_tb(lists:reverse(TBs), maps:get(order, Options, top_down));
+finalize_tracebacks(TBs, _, list, Options) ->
+    reorder_tb(tree_to_list(TBs), maps:get(order, Options, top_down));
+finalize_tracebacks(TBs, _, tree, _Options) ->
+    finalize_tree(TBs).
+
+-spec reorder_tb([[tr()]], tb_order()) -> [[tr()]].
+reorder_tb(TBs, top_down) -> [lists:reverse(TB) || TB <- TBs];
+reorder_tb(TBs, bottom_up) -> TBs.
+
+-spec tree_to_list(tb_acc_tree()) -> [[tr()]].
+tree_to_list(Tree) ->
+    lists:foldl(fun({K, []}, Res) -> [[K] | Res];
+                   ({K, V}, Res) -> [[K | Rest] || Rest <- tree_to_list(V)] ++ Res end, [], Tree).
+
+%% Reverse order and simplify leaf nodes
+-spec finalize_tree(tb_acc_tree()) -> tb_tree().
+finalize_tree(Tree) ->
+    lists:foldl(fun({K, []}, Res) -> [K | Res];
+                   ({K, V}, Res) -> [{K, finalize_tree(V)} | Res]
+                end, [], Tree).
+
 %% Filter ranges
 
-filter_ranges_step(PredF, T = #tr{pid = Pid}, State = #{traces := Traces, pid_states := States, max_depth := MaxDepth}) ->
+range_step(PredF, T = #tr{pid = Pid}, State = #{traces := Traces, pid_states := States, max_depth := MaxDepth}) ->
     PidState = maps:get(Pid, States, no_state),
     case filter_range(PredF, T, PidState, MaxDepth) of
         {complete, Trace} -> State#{traces := [Trace | Traces], pid_states := maps:remove(Pid, States)};
