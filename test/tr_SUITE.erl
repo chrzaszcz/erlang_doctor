@@ -3,19 +3,32 @@
 
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("common_test/include/ct.hrl").
--include_lib("erlang_doctor/include/tr.hrl").
+-include("tr.hrl").
 
 %% CT callbacks
 
 all() ->
-    [simple_total,
-     acc_and_own_for_recursion,
-     acc_and_own_for_recursion_with_exception,
-     acc_and_own_for_indirect_recursion,
-     dump_and_load,
-     interleave,
-     call_without_return,
-     return_without_call].
+    [{group, tracebacks},
+     {group, call_stat}].
+
+groups() ->
+    [{tracebacks, [single_tb,
+                   tb,
+                   tb_bottom_up,
+                   tb_limit,
+                   tb_longest,
+                   tb_all,
+                   tb_all_limit,
+                   tb_tree,
+                   tb_tree_longest]},
+     {call_stat, [simple_total,
+                  acc_and_own_for_recursion,
+                  acc_and_own_for_recursion_with_exception,
+                  acc_and_own_for_indirect_recursion,
+                  dump_and_load,
+                  interleave,
+                  call_without_return,
+                  return_without_call]}].
 
 init_per_suite(Config) ->
     ok = application:start(erlang_doctor),
@@ -32,6 +45,118 @@ end_per_testcase(_TC, _Config) ->
     tr:clean().
 
 %% Test cases
+
+single_tb(_Config) ->
+    tr:trace_calls([{?MODULE, fib, 1}]),
+    ?MODULE:fib(4),
+    tr:stop_tracing_calls(),
+    ct:pal("~p~n", [ets:tab2list(trace)]),
+    TB = tr:traceback(fun(#tr{event = return_from, data = N}) when N < 2 -> true end),
+    ct:pal("~p~n", [TB]),
+    ?assertMatch([#tr{data = [1]}, #tr{data = [2]}, #tr{data = [3]}, #tr{data = [4]}], TB).
+
+tb(_Config) ->
+    tr:trace_calls([{?MODULE, fib, 1}]),
+    ?MODULE:fib(4),
+    tr:stop_tracing_calls(),
+    ct:pal("~p~n", [ets:tab2list(trace)]),
+    TBs = tr:tracebacks(fun(#tr{event = return_from, data = N}) when N < 2 -> true end),
+    ct:pal("~p~n", [TBs]),
+    ?assertMatch([[#tr{data = [2]}, #tr{data = [3]}, #tr{data = [4]}],
+                  [#tr{data = [1]}, #tr{data = [3]}, #tr{data = [4]}],
+                  [#tr{data = [2]}, #tr{data = [4]}]], TBs).
+
+tb_bottom_up(_Config) ->
+    tr:trace_calls([{?MODULE, fib, 1}]),
+    ?MODULE:fib(4),
+    tr:stop_tracing_calls(),
+    ct:pal("~p~n", [ets:tab2list(trace)]),
+    TBs = tr:tracebacks(fun(#tr{event = return_from, data = N}) when N < 2 -> true end,
+                               #{order => bottom_up}),
+    ct:pal("~p~n", [TBs]),
+    ?assertMatch([[#tr{data = [4]}, #tr{data = [3]}, #tr{data = [2]}],
+                  [#tr{data = [4]}, #tr{data = [3]}, #tr{data = [1]}],
+                  [#tr{data = [4]}, #tr{data = [2]}]], TBs).
+
+tb_limit(_Config) ->
+    tr:trace_calls([{?MODULE, fib, 1}]),
+    ?MODULE:fib(4),
+    tr:stop_tracing_calls(),
+    ct:pal("~p~n", [ets:tab2list(trace)]),
+    TBs = tr:tracebacks(fun(#tr{event = return_from, data = N}) when N < 2 -> true end,
+                               #{limit => 3}),
+    ct:pal("~p~n", [TBs]),
+    ?assertMatch([[#tr{data = [2]}, #tr{data = [3]}, #tr{data = [4]}]], TBs).
+
+tb_all(_Config) ->
+    tr:trace_calls([{?MODULE, fib, 1}]),
+    ?MODULE:fib(4),
+    tr:stop_tracing_calls(),
+    ct:pal("~p~n", [ets:tab2list(trace)]),
+    TBs = tr:tracebacks(fun(#tr{event = return_from, data = N}) when N < 2 -> true end,
+                               #{output => all}),
+    ct:pal("~p~n", [TBs]),
+    ?assertMatch([[#tr{data = [1]}, #tr{data = [2]}, #tr{data = [3]}, #tr{data = [4]}],
+                  [#tr{data = [0]}, #tr{data = [2]}, #tr{data = [3]}, #tr{data = [4]}],
+                  [#tr{data = [2]}, #tr{data = [3]}, #tr{data = [4]}],
+                  [#tr{data = [1]}, #tr{data = [3]}, #tr{data = [4]}],
+                  [#tr{data = [1]}, #tr{data = [2]}, #tr{data = [4]}],
+                  [#tr{data = [0]}, #tr{data = [2]}, #tr{data = [4]}],
+                  [#tr{data = [2]}, #tr{data = [4]}]], TBs).
+
+tb_longest(_Config) ->
+    tr:trace_calls([{?MODULE, fib, 1}]),
+    ?MODULE:fib(4),
+    tr:stop_tracing_calls(),
+    ct:pal("~p~n", [ets:tab2list(trace)]),
+    TBs = tr:tracebacks(fun(#tr{event = return_from, data = N}) when N < 2 -> true end,
+                               #{output => longest}),
+    ct:pal("~p~n", [TBs]),
+    ?assertMatch([[#tr{data = [1]}, #tr{data = [2]}, #tr{data = [3]}, #tr{data = [4]}],
+                  [#tr{data = [0]}, #tr{data = [2]}, #tr{data = [3]}, #tr{data = [4]}],
+                  [#tr{data = [1]}, #tr{data = [3]}, #tr{data = [4]}],
+                  [#tr{data = [1]}, #tr{data = [2]}, #tr{data = [4]}],
+                  [#tr{data = [0]}, #tr{data = [2]}, #tr{data = [4]}]], TBs).
+
+tb_all_limit(_Config) ->
+    tr:trace_calls([{?MODULE, fib, 1}]),
+    ?MODULE:fib(4),
+    tr:stop_tracing_calls(),
+    ct:pal("~p~n", [ets:tab2list(trace)]),
+    TBs = tr:tracebacks(fun(#tr{event = return_from, data = N}) when N < 2 -> true end,
+                               #{limit => 3, output => all}),
+    ct:pal("~p~n", [TBs]),
+    ?assertMatch([[#tr{data = [1]}, #tr{data = [2]}, #tr{data = [3]}, #tr{data = [4]}],
+                  [#tr{data = [0]}, #tr{data = [2]}, #tr{data = [3]}, #tr{data = [4]}],
+                  [#tr{data = [2]}, #tr{data = [3]}, #tr{data = [4]}]], TBs).
+
+tb_tree(_Config) ->
+    tr:trace_calls([{?MODULE, fib, 1}]),
+    ?MODULE:fib(4),
+    tr:stop_tracing_calls(),
+    ct:pal("~p~n", [ets:tab2list(trace)]),
+    TBs = tr:tracebacks(fun(#tr{event = return_from, data = N}) when N < 2 -> true end,
+                               #{format => tree}),
+    ct:pal("~p~n", [TBs]),
+    ?assertMatch([{#tr{data = [4]}, [{#tr{data = [3]}, [#tr{data = [2]},
+                                                        #tr{data = [1]}]},
+                                     #tr{data = [2]}]}], TBs).
+
+tb_tree_longest(_Config) ->
+    tr:trace_calls([{?MODULE, fib, 1}]),
+    ?MODULE:fib(4),
+    tr:stop_tracing_calls(),
+    ct:pal("~p~n", [ets:tab2list(trace)]),
+    TBs = tr:tracebacks(fun(#tr{event = return_from, data = N}) when N < 2 -> true end,
+                               #{format => tree, output => longest}),
+    TBs = tr:tracebacks(fun(#tr{event = return_from, data = N}) when N < 2 -> true end,
+                               #{format => tree, output => all}), %% same result for trees
+    ct:pal("~p~n", [TBs]),
+    ?assertMatch([{#tr{data = [4]}, [{#tr{data = [3]}, [{#tr{data = [2]}, [#tr{data = [1]},
+                                                                           #tr{data = [0]}]},
+                                                        #tr{data = [1]}]},
+                                     {#tr{data = [2]}, [#tr{data = [1]},
+                                                        #tr{data = [0]}]}]}], TBs).
 
 simple_total(_Config) ->
     tr:trace_calls([{?MODULE, factorial, 1}]),
@@ -198,6 +323,10 @@ factorial_with_helper(0) ->
     1.
 
 factorial_helper(N) -> N * factorial_with_helper(N - 1).
+
+fib(N) when N > 1 -> fib(N - 1) + fib(N - 2);
+fib(1) -> 1;
+fib(0) -> 0.
 
 reply_after(Sender, Delay) ->
     timer:sleep(Delay),
