@@ -249,7 +249,7 @@ You can change this by returning tracebacks for all matching traces even if they
       ts = 1617099584108006}]]
 ```
 
-The third possibility is `output => leaves` which does the opposite of pruning, leaving only the longest tracabecks when they overlap:
+The third possibility is `output => longest` which does the opposite of pruning, leaving only the longest tracabecks when they overlap:
 
 ```erlang
 32> tr:tracebacks(fun(#tr{data = 1}) -> true end, #{output => longest}).
