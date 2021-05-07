@@ -1,6 +1,6 @@
 [![GitHub Actions](https://github.com/chrzaszcz/erlang_doctor/actions/workflows/test.yml/badge.svg)](https://github.com/chrzaszcz/erlang_doctor/actions)
 
-## Use it now in your Erlang shell
+## Try it out now in your Erlang shell
 
 To quickly try it out without including it as a dependency, copy & paste the following to your Erlang shell.
 
@@ -27,6 +27,17 @@ This compact tool is capable of much more - see below.
 
 To avoid copy-pasting the snippet shown above, you can include `erlang_doctor` in your dependencies in `rebar.config`.
 There is a [Hex package](https://hex.pm/packages/erlang_doctor) as well.
+
+## Use it during development
+
+You can make Erlang Doctor available in the Erlang/Rebar3 shell during development by loading it in your `~/.erlang` file:
+
+```erlang
+code:add_path("~/dev/erlang_doctor/_build/default/lib/erlang_doctor/ebin").
+code:load_file(tr).
+```
+
+Alternatively, you can 
 
 ## Tracing: data collection
 
@@ -344,7 +355,7 @@ To do this, we group all calls under one key, e.g. `total`:
 
 Values of the returned map have the following format:
 
-```erlang{call_count(), acc_time(), own_time()}```
+```{call_count(), acc_time(), own_time()}```
 
 In the example there are four calls, which took 7703 microseconds in total.
 For nested calls we only take into account the outermost call, so this means that the whole calculation took 7.703 ms.
