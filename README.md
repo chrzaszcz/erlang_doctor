@@ -37,8 +37,6 @@ code:add_path("~/dev/erlang_doctor/_build/default/lib/erlang_doctor/ebin").
 code:load_file(tr).
 ```
 
-Alternatively, you can 
-
 ## Tracing: data collection
 
 Test suite helpers from `tr_SUITE.erl` are used here as examples.
