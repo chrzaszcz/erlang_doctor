@@ -9,7 +9,8 @@
 
 all() ->
     [{group, tracebacks},
-     {group, call_stat}].
+     {group, call_stat},
+     {group, utils}].
 
 groups() ->
     [{tracebacks, [single_tb,
@@ -28,7 +29,8 @@ groups() ->
                   dump_and_load,
                   interleave,
                   call_without_return,
-                  return_without_call]}].
+                  return_without_call]},
+     {utils, [do]}].
 
 init_per_suite(Config) ->
     ok = application:start(erlang_doctor),
@@ -45,6 +47,23 @@ end_per_testcase(_TC, _Config) ->
     tr:clean().
 
 %% Test cases
+
+do(_Config) ->
+    tr:trace_calls([{?MODULE, fib, 1}]),
+    ?MODULE:fib(2),
+    tr:stop_tracing_calls(),
+    MFA = {?MODULE, fib, 1},
+    ct:pal("~p~n", [ets:tab2list(trace)]),
+    [T1 = #tr{index = 1, event = call, mfa = MFA, data = [2]},
+     #tr{index = 2, event = call, mfa = MFA, data = [1]},
+     #tr{index = 3, event = return_from, mfa = MFA, data = 1},
+     T4 = #tr{index = 4, event = call, mfa = MFA, data = [0]},
+     #tr{index = 5, event = return_from, mfa = MFA, data = 0},
+     #tr{index = 6, event = return_from, mfa = MFA, data = 1}] = tr:select(),
+    1 = tr:do(T1),
+    0 = tr:do(T4),
+    1 = tr:do(1),
+    0 = tr:do(4).
 
 single_tb(_Config) ->
     tr:trace_calls([{?MODULE, fib, 1}]),
