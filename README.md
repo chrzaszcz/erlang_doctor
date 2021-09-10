@@ -288,7 +288,7 @@ All possible options for `tracebacks/2`:
 - `order` - `top_down` (default), `bottom_up`. Changes call order in each tracaback, only for the `list` format.
 - `limit` - positive integer or `infinity` (default). Limits the number of matched traces. The actual number of tracebacks returned can be less unless `output => all`
 
-There are also functions: `traceback/1` and `traceback/2`. They set `limit` to one and return only one trace if it exists. The options for ``traceback/2` are the same as for `traceback/2` except `limit` and `format`. Additionaly, it is possible to pass a `tr` record directly to `traceback/1` to obtain the traceback for the provided trace event.
+There are also functions: `traceback/1` and `traceback/2`. They set `limit` to one and return only one trace if it exists. The options for ``traceback/2` are the same as for `traceback/2` except `limit` and `format`. Additionaly, it is possible to pass a `tr` record (or an index) directly to `traceback/1` to obtain the traceback for the provided trace event.
 
 ### Trace ranges for filtered traces: `ranges`
 
@@ -318,7 +318,7 @@ There is also `tr:ranges/2` - it accepts a map of options with the following key
 - `max_depth` is the maximum depth of nested calls. You can use `#{max_depth => 1}`
    to see only the top-level call and the corresponding return.
 
-There are two additional function: `tr:range/1` and `tr:range/2`, which return only one range if it exists. It is possible to pass a `tr` record to `tr:range/1` as well.
+There are two additional function: `tr:range/1` and `tr:range/2`, which return only one range if it exists. It is possible to pass a `tr` record or an index to `tr:range/1` as well.
 
 ### Calling function from a trace: `do`
 
@@ -335,6 +335,11 @@ It is easy to replay a particular function call with `tr:do/1`:
 ```
 
 This is useful e.g. for checking if a bug has been fixed without running the whole test suite.
+This function can be called with an index as the argument.
+
+### Getting a single trace for the index: `lookup`
+
+Use `tr:lookup/1` to obtain the trace for an index.
 
 ## Profiling
 
