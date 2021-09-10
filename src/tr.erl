@@ -29,6 +29,7 @@
 -export([contains_data/2,
          call_selector/1,
          do/1,
+         lookup/1,
          app_modules/1,
          mfarity/1,
          mfa/2,
@@ -156,7 +157,9 @@ filter(F, Tab) ->
     Traces = foldl(fun(Tr, State) -> filter_trace(F, Tr, State) end, [], Tab),
     lists:reverse(Traces).
 
--spec traceback(pred() | tr()) -> [tr()].
+-spec traceback(pred() | tr() | pos_integer()) -> [tr()].
+traceback(Index) when is_integer(Index) ->
+    traceback(fun(#tr{index = I}) -> Index =:= I end);
 traceback(T = #tr{}) ->
     traceback(fun(Tr) -> Tr =:= T end);
 traceback(PredF) ->
@@ -185,7 +188,9 @@ tracebacks(PredF, Options) when is_map(Options) ->
         foldl(fun(T, State) -> tb_step(PredF, T, State) end, InitialState, Tab),
     finalize_tracebacks(TBs, Output, Format, Options).
 
--spec range(pred() | tr()) -> [tr()].
+-spec range(pred() | tr() | pos_integer()) -> [tr()].
+range(Index) when is_integer(Index) ->
+    range(fun(#tr{index = I}) -> Index =:= I end);
 range(T = #tr{}) ->
     range(fun(Tr) -> Tr =:= T end);
 range(PredF) ->
@@ -237,8 +242,15 @@ call_selector(F) ->
     end.
 
 -spec do(tr()) -> term().
+do(Index) when is_integer(Index) ->
+    do(lookup(Index));
 do(#tr{event = call, mfa = {M, F, Arity}, data = Args}) when length(Args) =:= Arity ->
     apply(M, F, Args).
+
+-spec lookup(pos_integer()) -> tr().
+lookup(Index) when is_integer(Index) ->
+    [T] = ets:lookup(tab(), Index),
+    T.
 
 -spec app_modules(atom()) -> [atom()].
 app_modules(AppName) ->
