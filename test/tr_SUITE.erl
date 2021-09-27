@@ -10,7 +10,8 @@
 all() ->
     [{group, tracebacks},
      {group, call_stat},
-     {group, utils}].
+     {group, utils},
+     {group, range_stats}].
 
 groups() ->
     [{tracebacks, [single_tb,
@@ -30,7 +31,8 @@ groups() ->
                   interleave,
                   call_without_return,
                   return_without_call]},
-     {utils, [do]}].
+     {utils, [do]},
+     {range_stats, [top_ranges]}].
 
 init_per_suite(Config) ->
     ok = application:start(erlang_doctor),
@@ -316,6 +318,22 @@ dump_and_load(_Config) ->
     ?assertEqual(BeforeDump, AfterLoad),
     file:delete(DumpFile).
 
+top_ranges(_Config) ->
+    tr:trace_calls([?MODULE]),
+    ?MODULE:fib(3),
+    ?MODULE:fib(4),
+    tr:stop_tracing_calls(),
+    ct:pal("~p~n", [ets:tab2list(trace)]),
+    TopRanges = tr:top_ranges(),
+    ct:pal("Top ranges: ~p~n", [TopRanges]),
+    Fib0 = [{call, {?MODULE, fib, [0]}}, {return, 0}],
+    Fib1 = [{call, {?MODULE, fib, [1]}}, {return, 1}],
+    Fib2 = [{call, {?MODULE, fib, [2]}}] ++ Fib1 ++ Fib0 ++  [{return, 1}],
+    Fib3 = [{call, {?MODULE, fib, [3]}}] ++ Fib2 ++ Fib1 ++  [{return, 2}],
+    [{T3, 2, Fib3}, {T2, 3, Fib2}, {T1, 5, Fib1}, {T0, 3, Fib0}] = TopRanges,
+    ?assert(T3 > T2),
+    ?assert(T2 > T1),
+    ?assert(T1 > T0).
 
 %% Helpers
 

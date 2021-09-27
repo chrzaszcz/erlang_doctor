@@ -21,6 +21,8 @@
          tracebacks/1, tracebacks/2,
          range/1, range/2,
          ranges/1, ranges/2,
+         range_stats/0, range_stats/1,
+         top_ranges/0, top_ranges/1, top_ranges/2,
          print_sorted_call_stat/2,
          sorted_call_stat/1,
          call_stat/1, call_stat/2]).
@@ -79,6 +81,23 @@
 -type tb_acc_tree() :: [{tr(), tb_acc_tree()}].
 -type tb_acc_list() :: [[tr()]].
 -type tb_acc() :: tb_acc_tree() | tb_acc_list().
+
+-type simple_call() :: {call, {module(), atom(), list()}}.
+-type simple_tr() :: simple_call() | {return | exception, any()}.
+
+-type range_stats_options() :: #{tab => atom()}.
+-type range_stats_state() :: #{pid_states := map(), tab := ets:tid()}.
+
+-type pid_ranges() :: [[simple_tr()] | simple_call()].
+
+-type top_ranges_options() :: #{max_size => pos_integer(),
+                                min_count => count(),
+                                min_time => time_diff()}.
+
+-type time_diff() :: integer().
+-type count() :: pos_integer().
+
+-type range_item() :: {time_diff(), count(), [simple_tr()]}.
 
 %% API - capturing, data manipulation
 
@@ -594,6 +613,97 @@ acc_time_key(_, #tr{}, _) -> no_key.
 own_time_key(#tr{event = call}, LastKey, #tr{}, _) when LastKey =/= no_key -> LastKey;
 own_time_key(_, _, #tr{event = Event}, Key) when ?is_return(Event), Key =/= no_key -> Key;
 own_time_key(_, _, #tr{}, _) -> no_key.
+
+%% Range statistics for redundancy check
+
+-spec range_stats() -> ets:tid().
+range_stats() ->
+    range_stats(#{}).
+
+-spec range_stats(range_stats_options()) -> ets:tid().
+range_stats(Options) when is_map(Options) ->
+    Tab = maps:get(tab, Options, tab()),
+    RangeTab = ets:new(range_stats, [public, {keypos, 3}]),
+    InitialState = maps:merge(#{pid_states => #{}, tab => RangeTab}, Options),
+    foldl(fun(T, S) -> range_stats_step(T, S) end, InitialState, Tab),
+    RangeTab.
+
+-spec range_stats_step(tr(), range_stats_state()) -> range_stats_state().
+range_stats_step(Tr = #tr{pid = Pid, ts = TS}, State = #{pid_states := PidStates, tab := RTab}) ->
+    PidState = maps:get(Pid, PidStates, []),
+    Item = simplify_trace_item(Tr),
+    NewPidState = update_range_stats(Item, TS, PidState, RTab),
+    NewPidStates = PidStates#{Pid => NewPidState},
+    State#{pid_states => NewPidStates}.
+
+-spec simplify_trace_item(tr()) -> simple_tr().
+simplify_trace_item(#tr{event = call, mfa = MFA, data = Args}) ->
+    {call, mfa(MFA, Args)};
+simplify_trace_item(#tr{event = return_from, data = Value}) ->
+    {return, Value};
+simplify_trace_item(#tr{event = exception_from, data = Value}) ->
+    {exception, Value}.
+
+-spec update_range_stats(simple_tr(), integer(), pid_ranges(), ets:tid()) ->
+          pid_ranges().
+update_range_stats(Item = {call, _}, TS, PidState, _RTab) ->
+    [{Item, TS} | PidState];
+update_range_stats(Item, TS, PidState, RTab) ->
+    update_stats_with_new_range(PidState, RTab, [Item], TS).
+
+-spec update_stats_with_new_range(pid_ranges(), ets:tid(), [simple_tr()], integer()) ->
+          pid_ranges().
+update_stats_with_new_range([Range | State], RTab, Acc, TS) when is_list(Range) ->
+    update_stats_with_new_range(State, RTab, Range ++ Acc, TS);
+update_stats_with_new_range([{Call = {call, _}, CallTS} | State], RTab, Acc, ReturnTS) ->
+    Range = [Call | Acc],
+    insert_range(Range, ReturnTS - CallTS, RTab),
+    [Range | State].
+
+-spec insert_range([simple_tr()], time_diff(), ets:tid()) -> true.
+insert_range(Range, Time, RTab) ->
+    RItem = case ets:lookup(RTab, Range) of
+                [] -> {Time, 1, Range};
+                [{PrevTime, Count, _}] -> {PrevTime + Time, Count + 1, Range}
+            end,
+    ets:insert(RTab, RItem).
+
+-spec top_ranges() -> [range_item()].
+top_ranges() ->
+    top_ranges(#{}).
+
+-spec top_ranges(top_ranges_options() | ets:tid()) -> [range_item()].
+top_ranges(Options) when is_map(Options) ->
+    Stats = range_stats(),
+    TopRanges = top_ranges(Stats, Options),
+    ets:delete(Stats),
+    TopRanges;
+top_ranges(RTab) ->
+    top_ranges(RTab, #{}).
+
+-spec top_ranges(ets:tid(), top_ranges_options()) -> [range_item()].
+top_ranges(RTab, Options) ->
+    MaxSize = maps:get(max_size, Options, 10),
+    MinCount = maps:get(min_count, Options, 2),
+    MinTime = maps:get(min_time, Options, 0),
+    Set = ets:foldl(fun(TRItem = {Time, Count, _}, T) when Count >= MinCount, Time >= MinTime ->
+                            insert_top_ranges_item(TRItem, T, MaxSize);
+                       (_, T) ->
+                            T
+                    end, gb_sets:empty(), RTab),
+    lists:reverse(lists:sort(gb_sets:to_list(Set))).
+
+-spec insert_top_ranges_item(range_item(), gb_sets:set(range_item()), pos_integer()) ->
+          gb_sets:set(range_item()).
+insert_top_ranges_item(TRItem, Set, MaxSize) ->
+    NewSet = gb_sets:add(TRItem, Set),
+    case gb_sets:size(NewSet) of
+        N when N =< MaxSize ->
+            NewSet;
+        N when N =:= MaxSize + 1 ->
+            {_, ReducedSet} = gb_sets:take_smallest(NewSet),
+            ReducedSet
+    end.
 
 %% Helpers
 
