@@ -21,8 +21,8 @@
          tracebacks/1, tracebacks/2,
          range/1, range/2,
          ranges/1, ranges/2,
-         range_stats/0, range_stats/1,
-         top_ranges/0, top_ranges/1, top_ranges/2,
+         call_tree_stat/0, call_tree_stat/1,
+         top_call_trees/0, top_call_trees/1, top_call_trees/2,
          print_sorted_call_stat/2,
          sorted_call_stat/1,
          call_stat/1, call_stat/2]).
@@ -82,22 +82,31 @@
 -type tb_acc_list() :: [[tr()]].
 -type tb_acc() :: tb_acc_tree() | tb_acc_list().
 
--type simple_call() :: {call, {module(), atom(), list()}}.
--type simple_tr() :: simple_call() | {return | exception, any()}.
+-type call() :: {call, {module(), atom(), list()}}.
+-type result() :: {return | exception, any()}.
+-type simple_tr() :: call() | result().
 
--type range_stats_options() :: #{tab => atom()}.
--type range_stats_state() :: #{pid_states := map(), tab := ets:tid()}.
+-type call_tree_stat_options() :: #{tab => atom()}.
+-type call_tree_stat_state() :: #{pid_states := map(), tab := ets:tid()}.
 
--type pid_ranges() :: [[simple_tr()] | simple_call()].
+-type pid_call_state() :: [[simple_tr()] | call()].
 
--type top_ranges_options() :: #{max_size => pos_integer(),
-                                min_count => count(),
-                                min_time => time_diff()}.
+-type top_call_trees_options() :: #{max_size => pos_integer(),
+                                    min_count => count(),
+                                    min_time => time_diff()}.
 
 -type time_diff() :: integer().
 -type count() :: pos_integer().
 
--type range_item() :: {time_diff(), count(), [simple_tr()]}.
+-record(node, {module :: module(),
+               function :: atom(),
+               args = [] :: list(),
+               children = [] :: [#node{}],
+               result :: result()}).
+
+-type tree() :: #node{}.
+
+-type tree_item() :: {time_diff(), count(), tree()}.
 
 %% API - capturing, data manipulation
 
@@ -614,25 +623,25 @@ own_time_key(#tr{event = call}, LastKey, #tr{}, _) when LastKey =/= no_key -> La
 own_time_key(_, _, #tr{event = Event}, Key) when ?is_return(Event), Key =/= no_key -> Key;
 own_time_key(_, _, #tr{}, _) -> no_key.
 
-%% Range statistics for redundancy check
+%% Call tree statistics for redundancy check
 
--spec range_stats() -> ets:tid().
-range_stats() ->
-    range_stats(#{}).
+-spec call_tree_stat() -> ets:tid().
+call_tree_stat() ->
+    call_tree_stat(#{}).
 
--spec range_stats(range_stats_options()) -> ets:tid().
-range_stats(Options) when is_map(Options) ->
-    Tab = maps:get(tab, Options, tab()),
-    RangeTab = ets:new(range_stats, [public, {keypos, 3}]),
-    InitialState = maps:merge(#{pid_states => #{}, tab => RangeTab}, Options),
-    foldl(fun(T, S) -> range_stats_step(T, S) end, InitialState, Tab),
-    RangeTab.
+-spec call_tree_stat(call_tree_stat_options()) -> ets:tid().
+call_tree_stat(Options) when is_map(Options) ->
+    TraceTab = maps:get(tab, Options, tab()),
+    CallTreeTab = ets:new(call_tree_stat, [public, {keypos, 3}]),
+    InitialState = maps:merge(#{pid_states => #{}, tab => CallTreeTab}, Options),
+    foldl(fun(T, S) -> call_tree_stat_step(T, S) end, InitialState, TraceTab),
+    CallTreeTab.
 
--spec range_stats_step(tr(), range_stats_state()) -> range_stats_state().
-range_stats_step(Tr = #tr{pid = Pid, ts = TS}, State = #{pid_states := PidStates, tab := RTab}) ->
+-spec call_tree_stat_step(tr(), call_tree_stat_state()) -> call_tree_stat_state().
+call_tree_stat_step(Tr = #tr{pid = Pid, ts = TS}, State = #{pid_states := PidStates, tab := RTab}) ->
     PidState = maps:get(Pid, PidStates, []),
     Item = simplify_trace_item(Tr),
-    NewPidState = update_range_stats(Item, TS, PidState, RTab),
+    NewPidState = update_call_tree_stat(Item, TS, PidState, RTab),
     NewPidStates = PidStates#{Pid => NewPidState},
     State#{pid_states => NewPidStates}.
 
@@ -644,58 +653,59 @@ simplify_trace_item(#tr{event = return_from, data = Value}) ->
 simplify_trace_item(#tr{event = exception_from, data = Value}) ->
     {exception, Value}.
 
--spec update_range_stats(simple_tr(), integer(), pid_ranges(), ets:tid()) ->
-          pid_ranges().
-update_range_stats(Item = {call, _}, TS, PidState, _RTab) ->
+-spec update_call_tree_stat(simple_tr(), integer(), pid_call_state(), ets:tid()) ->
+          pid_call_state().
+update_call_tree_stat(Item = {call, _}, TS, PidState, _RTab) ->
     [{Item, TS} | PidState];
-update_range_stats(Item, TS, PidState, RTab) ->
-    update_stats_with_new_range(PidState, RTab, [Item], TS).
+update_call_tree_stat(Item, TS, PidState, RTab) ->
+    update_stat_with_new_call_tree(PidState, RTab, #node{result = Item}, TS).
 
--spec update_stats_with_new_range(pid_ranges(), ets:tid(), [simple_tr()], integer()) ->
-          pid_ranges().
-update_stats_with_new_range([Range | State], RTab, Acc, TS) when is_list(Range) ->
-    update_stats_with_new_range(State, RTab, Range ++ Acc, TS);
-update_stats_with_new_range([{Call = {call, _}, CallTS} | State], RTab, Acc, ReturnTS) ->
-    Range = [Call | Acc],
-    insert_range(Range, ReturnTS - CallTS, RTab),
-    [Range | State].
+-spec update_stat_with_new_call_tree(pid_call_state(), ets:tid(), tree(), integer()) ->
+          pid_call_state().
+update_stat_with_new_call_tree([Child = #node{} | State], RTab, Node = #node{children = Children}, TS) ->
+    update_stat_with_new_call_tree(State, RTab, Node#node{children = [Child | Children]}, TS);
+update_stat_with_new_call_tree([{Call, CallTS} | State], RTab, Node, ReturnTS) ->
+    {call, {M, F, Args}} = Call,
+    FinalNode = Node#node{module = M, function = F, args = Args},
+    insert_call_tree(FinalNode, ReturnTS - CallTS, RTab),
+    [FinalNode | State].
 
--spec insert_range([simple_tr()], time_diff(), ets:tid()) -> true.
-insert_range(Range, Time, RTab) ->
-    RItem = case ets:lookup(RTab, Range) of
-                [] -> {Time, 1, Range};
-                [{PrevTime, Count, _}] -> {PrevTime + Time, Count + 1, Range}
+-spec insert_call_tree(tree(), time_diff(), ets:tid()) -> true.
+insert_call_tree(CallTree, Time, RTab) ->
+    RItem = case ets:lookup(RTab, CallTree) of
+                [] -> {Time, 1, CallTree};
+                [{PrevTime, Count, _}] -> {PrevTime + Time, Count + 1, CallTree}
             end,
     ets:insert(RTab, RItem).
 
--spec top_ranges() -> [range_item()].
-top_ranges() ->
-    top_ranges(#{}).
+-spec top_call_trees() -> [tree_item()].
+top_call_trees() ->
+    top_call_trees(#{}).
 
--spec top_ranges(top_ranges_options() | ets:tid()) -> [range_item()].
-top_ranges(Options) when is_map(Options) ->
-    Stats = range_stats(),
-    TopRanges = top_ranges(Stats, Options),
-    ets:delete(Stats),
-    TopRanges;
-top_ranges(RTab) ->
-    top_ranges(RTab, #{}).
+-spec top_call_trees(top_call_trees_options() | ets:tid()) -> [tree_item()].
+top_call_trees(Options) when is_map(Options) ->
+    Stat = call_tree_stat(),
+    TopTrees = top_call_trees(Stat, Options),
+    ets:delete(Stat),
+    TopTrees;
+top_call_trees(RTab) ->
+    top_call_trees(RTab, #{}).
 
--spec top_ranges(ets:tid(), top_ranges_options()) -> [range_item()].
-top_ranges(RTab, Options) ->
+-spec top_call_trees(ets:tid(), top_call_trees_options()) -> [tree_item()].
+top_call_trees(RTab, Options) ->
     MaxSize = maps:get(max_size, Options, 10),
     MinCount = maps:get(min_count, Options, 2),
     MinTime = maps:get(min_time, Options, 0),
     Set = ets:foldl(fun(TRItem = {Time, Count, _}, T) when Count >= MinCount, Time >= MinTime ->
-                            insert_top_ranges_item(TRItem, T, MaxSize);
+                            insert_top_call_trees_item(TRItem, T, MaxSize);
                        (_, T) ->
                             T
                     end, gb_sets:empty(), RTab),
     lists:reverse(lists:sort(gb_sets:to_list(Set))).
 
--spec insert_top_ranges_item(range_item(), gb_sets:set(range_item()), pos_integer()) ->
-          gb_sets:set(range_item()).
-insert_top_ranges_item(TRItem, Set, MaxSize) ->
+-spec insert_top_call_trees_item(tree_item(), gb_sets:set(tree_item()), pos_integer()) ->
+          gb_sets:set(tree_item()).
+insert_top_call_trees_item(TRItem, Set, MaxSize) ->
     NewSet = gb_sets:add(TRItem, Set),
     case gb_sets:size(NewSet) of
         N when N =< MaxSize ->

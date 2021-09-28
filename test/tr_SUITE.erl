@@ -11,7 +11,7 @@ all() ->
     [{group, tracebacks},
      {group, call_stat},
      {group, utils},
-     {group, range_stats}].
+     {group, call_tree_stat}].
 
 groups() ->
     [{tracebacks, [single_tb,
@@ -32,7 +32,7 @@ groups() ->
                   call_without_return,
                   return_without_call]},
      {utils, [do]},
-     {range_stats, [top_ranges]}].
+     {call_tree_stat, [top_call_trees]}].
 
 init_per_suite(Config) ->
     ok = application:start(erlang_doctor),
@@ -318,19 +318,20 @@ dump_and_load(_Config) ->
     ?assertEqual(BeforeDump, AfterLoad),
     file:delete(DumpFile).
 
-top_ranges(_Config) ->
+top_call_trees(_Config) ->
     tr:trace_calls([?MODULE]),
     ?MODULE:fib(3),
     ?MODULE:fib(4),
     tr:stop_tracing_calls(),
     ct:pal("~p~n", [ets:tab2list(trace)]),
-    TopRanges = tr:top_ranges(),
-    ct:pal("Top ranges: ~p~n", [TopRanges]),
-    Fib0 = [{call, {?MODULE, fib, [0]}}, {return, 0}],
-    Fib1 = [{call, {?MODULE, fib, [1]}}, {return, 1}],
-    Fib2 = [{call, {?MODULE, fib, [2]}}] ++ Fib1 ++ Fib0 ++  [{return, 1}],
-    Fib3 = [{call, {?MODULE, fib, [3]}}] ++ Fib2 ++ Fib1 ++  [{return, 2}],
-    [{T3, 2, Fib3}, {T2, 3, Fib2}, {T1, 5, Fib1}, {T0, 3, Fib0}] = TopRanges,
+    Top = tr:top_call_trees(),
+    ct:pal("Top call_trees: ~p~n", [Top]),
+    N = #node{module = ?MODULE, function = fib},
+    Fib0 = N#node{args = [0], result = {return, 0}},
+    Fib1 = N#node{args = [1], result = {return, 1}},
+    Fib2 = N#node{args = [2], children = [Fib1, Fib0], result = {return, 1}},
+    Fib3 = N#node{args = [3], children = [Fib2, Fib1], result = {return, 2}},
+    [{T3, 2, Fib3}, {T2, 3, Fib2}, {T1, 5, Fib1}, {T0, 3, Fib0}] = Top,
     ?assert(T3 > T2),
     ?assert(T2 > T1),
     ?assert(T1 > T0).
