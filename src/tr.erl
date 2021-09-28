@@ -638,10 +638,10 @@ call_tree_stat(Options) when is_map(Options) ->
     CallTreeTab.
 
 -spec call_tree_stat_step(tr(), call_tree_stat_state()) -> call_tree_stat_state().
-call_tree_stat_step(Tr = #tr{pid = Pid, ts = TS}, State = #{pid_states := PidStates, tab := RTab}) ->
+call_tree_stat_step(Tr = #tr{pid = Pid, ts = TS}, State = #{pid_states := PidStates, tab := TreeTab}) ->
     PidState = maps:get(Pid, PidStates, []),
     Item = simplify_trace_item(Tr),
-    NewPidState = update_call_tree_stat(Item, TS, PidState, RTab),
+    NewPidState = update_call_tree_stat(Item, TS, PidState, TreeTab),
     NewPidStates = PidStates#{Pid => NewPidState},
     State#{pid_states => NewPidStates}.
 
@@ -655,28 +655,28 @@ simplify_trace_item(#tr{event = exception_from, data = Value}) ->
 
 -spec update_call_tree_stat(simple_tr(), integer(), pid_call_state(), ets:tid()) ->
           pid_call_state().
-update_call_tree_stat(Item = {call, _}, TS, PidState, _RTab) ->
+update_call_tree_stat(Item = {call, _}, TS, PidState, _TreeTab) ->
     [{Item, TS} | PidState];
-update_call_tree_stat(Item, TS, PidState, RTab) ->
-    update_stat_with_new_call_tree(PidState, RTab, #node{result = Item}, TS).
+update_call_tree_stat(Item, TS, PidState, TreeTab) ->
+    update_stat_with_new_call_tree(PidState, TreeTab, #node{result = Item}, TS).
 
 -spec update_stat_with_new_call_tree(pid_call_state(), ets:tid(), tree(), integer()) ->
           pid_call_state().
-update_stat_with_new_call_tree([Child = #node{} | State], RTab, Node = #node{children = Children}, TS) ->
-    update_stat_with_new_call_tree(State, RTab, Node#node{children = [Child | Children]}, TS);
-update_stat_with_new_call_tree([{Call, CallTS} | State], RTab, Node, ReturnTS) ->
+update_stat_with_new_call_tree([Child = #node{} | State], TreeTab, Node = #node{children = Children}, TS) ->
+    update_stat_with_new_call_tree(State, TreeTab, Node#node{children = [Child | Children]}, TS);
+update_stat_with_new_call_tree([{Call, CallTS} | State], TreeTab, Node, ReturnTS) ->
     {call, {M, F, Args}} = Call,
     FinalNode = Node#node{module = M, function = F, args = Args},
-    insert_call_tree(FinalNode, ReturnTS - CallTS, RTab),
+    insert_call_tree(FinalNode, ReturnTS - CallTS, TreeTab),
     [FinalNode | State].
 
 -spec insert_call_tree(tree(), time_diff(), ets:tid()) -> true.
-insert_call_tree(CallTree, Time, RTab) ->
-    RItem = case ets:lookup(RTab, CallTree) of
+insert_call_tree(CallTree, Time, TreeTab) ->
+    TreeItem = case ets:lookup(TreeTab, CallTree) of
                 [] -> {Time, 1, CallTree};
                 [{PrevTime, Count, _}] -> {PrevTime + Time, Count + 1, CallTree}
             end,
-    ets:insert(RTab, RItem).
+    ets:insert(TreeTab, TreeItem).
 
 -spec top_call_trees() -> [tree_item()].
 top_call_trees() ->
@@ -688,25 +688,25 @@ top_call_trees(Options) when is_map(Options) ->
     TopTrees = top_call_trees(Stat, Options),
     ets:delete(Stat),
     TopTrees;
-top_call_trees(RTab) ->
-    top_call_trees(RTab, #{}).
+top_call_trees(TreeTab) ->
+    top_call_trees(TreeTab, #{}).
 
 -spec top_call_trees(ets:tid(), top_call_trees_options()) -> [tree_item()].
-top_call_trees(RTab, Options) ->
+top_call_trees(TreeTab, Options) ->
     MaxSize = maps:get(max_size, Options, 10),
     MinCount = maps:get(min_count, Options, 2),
     MinTime = maps:get(min_time, Options, 0),
-    Set = ets:foldl(fun(TRItem = {Time, Count, _}, T) when Count >= MinCount, Time >= MinTime ->
-                            insert_top_call_trees_item(TRItem, T, MaxSize);
+    Set = ets:foldl(fun(TreeItem = {Time, Count, _}, T) when Count >= MinCount, Time >= MinTime ->
+                            insert_top_call_trees_item(TreeItem, T, MaxSize);
                        (_, T) ->
                             T
-                    end, gb_sets:empty(), RTab),
+                    end, gb_sets:empty(), TreeTab),
     lists:reverse(lists:sort(gb_sets:to_list(Set))).
 
 -spec insert_top_call_trees_item(tree_item(), gb_sets:set(tree_item()), pos_integer()) ->
           gb_sets:set(tree_item()).
-insert_top_call_trees_item(TRItem, Set, MaxSize) ->
-    NewSet = gb_sets:add(TRItem, Set),
+insert_top_call_trees_item(TreeItem, Set, MaxSize) ->
+    NewSet = gb_sets:add(TreeItem, Set),
     case gb_sets:size(NewSet) of
         N when N =< MaxSize ->
             NewSet;
