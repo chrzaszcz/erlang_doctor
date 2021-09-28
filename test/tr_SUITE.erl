@@ -331,7 +331,10 @@ top_call_trees(_Config) ->
     Fib1 = N#node{args = [1], result = {return, 1}},
     Fib2 = N#node{args = [2], children = [Fib1, Fib0], result = {return, 1}},
     Fib3 = N#node{args = [3], children = [Fib2, Fib1], result = {return, 2}},
-    [{T3, 2, Fib3}, {T2, 3, Fib2}, {T1, 5, Fib1}, {T0, 3, Fib0}] = Top,
+    Complete = tr:top_call_trees(#{output => complete}),
+    Reduced = tr:top_call_trees(),
+    [{T3, 2, Fib3}, {T2, 3, Fib2}, {T1, 5, Fib1}, {T0, 3, Fib0}] = Complete,
+    [{T3, 2, Fib3}, {T2, 3, Fib2}, {T1, 5, Fib1}] = Reduced,
     ?assert(T3 > T2),
     ?assert(T2 > T1),
     ?assert(T1 > T0).

@@ -22,6 +22,7 @@
          range/1, range/2,
          ranges/1, ranges/2,
          call_tree_stat/0, call_tree_stat/1,
+         reduce_call_trees/1,
          top_call_trees/0, top_call_trees/1, top_call_trees/2,
          print_sorted_call_stat/2,
          sorted_call_stat/1,
@@ -91,9 +92,12 @@
 
 -type pid_call_state() :: [[simple_tr()] | call()].
 
+-type top_call_trees_output() :: reduced | complete.
+
 -type top_call_trees_options() :: #{max_size => pos_integer(),
                                     min_count => count(),
-                                    min_time => time_diff()}.
+                                    min_time => time_diff(),
+                                    output => top_call_trees_output()}.
 
 -type time_diff() :: integer().
 -type count() :: pos_integer().
@@ -678,15 +682,40 @@ insert_call_tree(CallTree, Time, TreeTab) ->
             end,
     ets:insert(TreeTab, TreeItem).
 
+-spec reduce_call_trees(ets:tid()) -> true.
+reduce_call_trees(TreeTab) ->
+    RTab = ets:new(?FUNCTION_NAME, []),
+    ets:foldl(fun(Item, ok) -> reduce_tree_item(Item, RTab, TreeTab) end, ok, TreeTab),
+    ets:foldl(fun({Tree}, ok) -> ets:delete(TreeTab, Tree), ok end, ok, RTab),
+    ets:delete(RTab).
+
+-spec reduce_tree_item(tree_item(), ets:tid(), ets:tid()) -> ok.
+reduce_tree_item({_, Count, #node{children = Children}}, RTab, TreeTab) ->
+    [reduce_subtree(Child, Count, RTab, TreeTab) || Child <- Children],
+    ok.
+
+-spec reduce_subtree(tree(), count(), ets:tid(), ets:tid()) -> any().
+reduce_subtree(Node, Count, RTab, TreeTab) ->
+    case ets:lookup(TreeTab, Node) of
+        [{_, Count, _}] ->
+            ets:insert(RTab, {Node});
+        [{_, OtherCount, _}] when OtherCount > Count  ->
+            ok
+    end.
+
 -spec top_call_trees() -> [tree_item()].
 top_call_trees() ->
     top_call_trees(#{}).
 
 -spec top_call_trees(top_call_trees_options() | ets:tid()) -> [tree_item()].
 top_call_trees(Options) when is_map(Options) ->
-    Stat = call_tree_stat(),
-    TopTrees = top_call_trees(Stat, Options),
-    ets:delete(Stat),
+    TreeTab = call_tree_stat(),
+    case maps:get(output, Options, reduced) of
+        reduced -> reduce_call_trees(TreeTab);
+        complete -> ok
+    end,
+    TopTrees = top_call_trees(TreeTab, Options),
+    ets:delete(TreeTab),
     TopTrees;
 top_call_trees(TreeTab) ->
     top_call_trees(TreeTab, #{}).
