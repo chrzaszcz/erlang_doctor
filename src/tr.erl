@@ -684,23 +684,23 @@ insert_call_tree(CallTree, Time, TreeTab) ->
 
 -spec reduce_call_trees(ets:tid()) -> true.
 reduce_call_trees(TreeTab) ->
-    RTab = ets:new(?FUNCTION_NAME, []),
-    ets:foldl(fun(Item, ok) -> reduce_tree_item(Item, RTab, TreeTab) end, ok, TreeTab),
-    ets:foldl(fun({Tree}, ok) -> ets:delete(TreeTab, Tree), ok end, ok, RTab),
-    ets:delete(RTab).
+    ets:foldl(fun reduce_tree_item/2, TreeTab, TreeTab).
 
--spec reduce_tree_item(tree_item(), ets:tid(), ets:tid()) -> ok.
-reduce_tree_item({_, Count, #node{children = Children}}, RTab, TreeTab) ->
-    [reduce_subtree(Child, Count, RTab, TreeTab) || Child <- Children],
-    ok.
+-spec reduce_tree_item(tree_item(), ets:tid()) -> ok.
+reduce_tree_item({_, Count, #node{children = Children}}, TreeTab) ->
+    [reduce_subtree(Child, Count, TreeTab) || Child <- Children],
+    TreeTab.
 
--spec reduce_subtree(tree(), count(), ets:tid(), ets:tid()) -> any().
-reduce_subtree(Node, Count, RTab, TreeTab) ->
+-spec reduce_subtree(tree(), count(), ets:tid()) -> any().
+reduce_subtree(Node, Count, TreeTab) ->
     case ets:lookup(TreeTab, Node) of
-        [{_, Count, _}] ->
-            ets:insert(RTab, {Node});
+        [{_, Count, _} = Item] ->
+            reduce_tree_item(Item, TreeTab),
+            ets:delete(TreeTab, Node);
         [{_, OtherCount, _}] when OtherCount > Count  ->
-            ok
+            has_more_callers;
+        [] ->
+            already_deleted
     end.
 
 -spec top_call_trees() -> [tree_item()].
