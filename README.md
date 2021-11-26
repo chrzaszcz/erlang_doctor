@@ -343,7 +343,7 @@ Use `tr:lookup/1` to obtain the trace for an index.
 
 ## Profiling
 
-### call_stat
+### Call staticstics: `call_stat`
 
 Call statistics - for all calls. The argument of `tr:call_stat/1` is a function that returns a key
 by which the traces are grouped.
@@ -379,7 +379,7 @@ You can use the key function to do any filtering as well:
 #{0 => {1, 2039, 2039}, 1 => {1, 3961, 1922}, 2 => {1, 6053, 2092}}
 ```
 
-### sorted_call_stat, print_sorted_call_stat
+### Sorted call statistics: `sorted_call_stat`, `print_sorted_call_stat`
 
 You can sort the call stat by accumulated time, descending:
 
@@ -401,6 +401,60 @@ The second argument limits the table row number, e.g. we can only print the top 
 2  1  6053  2092
 1  1  3961  1922
 ```
+
+### Call tree statistics: `top_call_trees`
+
+This function makes it possible to detect complete call trees that repeat several times,
+where corresponding function calls and returns have the same arguments and return values, respectively.
+When such functions take a lot of time and do not have useful side effects, they can be often optimized.
+
+As an example, let's trace the call to a function which calculates the 4th element of the Fibonacci Sequence
+in a recursive way. Erlang Doctor has to be started and the trace table should be empty.
+
+```erlang
+5> tr:trace_calls([tr_SUITE]).
+ok
+6> tr_SUITE:fib(4).
+5
+7> tr:stop_tracing_calls().
+```
+
+Now it is possible to print the most time consuming call trees that repeat at least twice:
+
+```erlang
+16> tr:top_call_trees().
+[{13,2,
+  #node{module = tr_SUITE,function = fib,
+        args = [2],
+        children = [#node{module = tr_SUITE,function = fib,
+                          args = [1],
+                          children = [],
+                          result = {return,1}},
+                    #node{module = tr_SUITE,function = fib,
+                          args = [0],
+                          children = [],
+                          result = {return,0}}],
+        result = {return,1}}},
+ {5,3,
+  #node{module = tr_SUITE,function = fib,
+        args = [1],
+        children = [],
+        result = {return,1}}}]
+17>
+```
+
+The resulting list contains the tuples `{Time, Count, Tree}` where `Time` is the accumulated time spent in the tree
+and `Count` is the number of times the tree repeated. The list is sorted by `Time`, descending.
+Although the function executed quickly, `fib(2)` was called twice and `fib(3)` was called 3 times,
+what already indicates an issue.
+
+There is also `top_call_trees/1` that takes a map of options with the following keys:
+- `output` is `reduced` by default, but it can be set to `complete` where subtrees of already listed trees are also listed.
+- `min_count` is the minimum number of times a tree has to occur to be listed, the default is 2.
+- `min_time` is the minimum accumulated time for a tree, by default there is no minimum.
+- `max_size` is the maximum number of trees presented, the default is 10.
+
+As an exercise, try calling `tr:top_call_trees(#{min_count => 1000})` for `fib(20)`.
 
 ## Exporting and importing traces
 
