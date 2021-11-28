@@ -90,7 +90,7 @@
 -type call_tree_stat_options() :: #{tab => atom()}.
 -type call_tree_stat_state() :: #{pid_states := map(), tab := ets:tid()}.
 
--type pid_call_state() :: [[simple_tr()] | call()].
+-type pid_call_state() :: [tree() | call()].
 
 -type top_call_trees_output() :: reduced | complete.
 
@@ -645,7 +645,13 @@ call_tree_stat(Options) when is_map(Options) ->
 call_tree_stat_step(Tr = #tr{pid = Pid, ts = TS}, State = #{pid_states := PidStates, tab := TreeTab}) ->
     PidState = maps:get(Pid, PidStates, []),
     Item = simplify_trace_item(Tr),
-    NewPidState = update_call_tree_stat(Item, TS, PidState, TreeTab),
+    {Status, NewPidState} = update_call_trees(Item, TS, PidState),
+    case Status of
+        {new_node, CallTS} ->
+            insert_call_tree(hd(NewPidState), TS - CallTS, TreeTab);
+        no_new_nodes ->
+            ok
+    end,
     NewPidStates = PidStates#{Pid => NewPidState},
     State#{pid_states => NewPidStates}.
 
@@ -657,22 +663,21 @@ simplify_trace_item(#tr{event = return_from, data = Value}) ->
 simplify_trace_item(#tr{event = exception_from, data = Value}) ->
     {exception, Value}.
 
--spec update_call_tree_stat(simple_tr(), integer(), pid_call_state(), ets:tid()) ->
-          pid_call_state().
-update_call_tree_stat(Item = {call, _}, TS, PidState, _TreeTab) ->
-    [{Item, TS} | PidState];
-update_call_tree_stat(Item, TS, PidState, TreeTab) ->
-    update_stat_with_new_call_tree(PidState, TreeTab, #node{result = Item}, TS).
+-spec update_call_trees(simple_tr(), integer(), pid_call_state()) ->
+          {no_new_nodes | {new_node, integer()}, pid_call_state()}.
+update_call_trees(Item = {call, _}, TS, PidState) ->
+    {no_new_nodes, [{Item, TS} | PidState]};
+update_call_trees(Item, _TS, PidState) ->
+    {CallTS, NewPidState} = build_node(PidState, #node{result = Item}),
+    {{new_node, CallTS}, NewPidState}.
 
--spec update_stat_with_new_call_tree(pid_call_state(), ets:tid(), tree(), integer()) ->
-          pid_call_state().
-update_stat_with_new_call_tree([Child = #node{} | State], TreeTab, Node = #node{children = Children}, TS) ->
-    update_stat_with_new_call_tree(State, TreeTab, Node#node{children = [Child | Children]}, TS);
-update_stat_with_new_call_tree([{Call, CallTS} | State], TreeTab, Node, ReturnTS) ->
+-spec build_node(pid_call_state(), tree()) -> {integer(), pid_call_state()}.
+build_node([Child = #node{} | State], Node = #node{children = Children}) ->
+    build_node(State, Node#node{children = [Child | Children]});
+build_node([{Call, CallTS} | State], Node) ->
     {call, {M, F, Args}} = Call,
     FinalNode = Node#node{module = M, function = F, args = Args},
-    insert_call_tree(FinalNode, ReturnTS - CallTS, TreeTab),
-    [FinalNode | State].
+    {CallTS, [FinalNode | State]}.
 
 -spec insert_call_tree(tree(), time_diff(), ets:tid()) -> true.
 insert_call_tree(CallTree, Time, TreeTab) ->
