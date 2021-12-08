@@ -343,7 +343,7 @@ Use `tr:lookup/1` to obtain the trace for an index.
 
 ## Profiling
 
-### Call staticstics: `call_stat`
+### Call statistics: `call_stat`
 
 Call statistics - for all calls. The argument of `tr:call_stat/1` is a function that returns a key
 by which the traces are grouped.
