@@ -23,6 +23,7 @@ groups() ->
                    tb_tree,
                    tb_tree_longest]},
      {call_stat, [simple_total,
+                  single_pid,
                   acc_and_own_for_recursion,
                   acc_and_own_for_recursion_with_exception,
                   acc_and_own_for_indirect_recursion,
@@ -203,6 +204,48 @@ simple_total(_Config) ->
     ct:sleep(10),
     ct:pal("~p~n", [ets:tab2list(trace)]),
     [{total, 5, Acc2, Acc2}] = tr:sorted_call_stat(fun(_) -> total end),
+    tr:stop_tracing_calls().
+
+
+async_factorial() ->
+    receive
+        {do_factorial, N, From} ->
+            Res = ?MODULE:factorial(N),
+            From ! {ok, Res},
+            async_factorial();
+        stop -> ok
+    end.
+
+single_pid(_Config) ->
+    Pid = spawn_link(fun ?MODULE:async_factorial/0),
+    tr:trace_calls([{?MODULE, factorial, 1}], [Pid]),
+    %% call factorial within the pid and outside of it
+    ?MODULE:factorial(2),
+    Pid ! {do_factorial, 2, self()},
+    receive {ok, _} -> ok end,
+    ct:pal("~p~n", [ets:tab2list(trace)]),
+    [{total, 3, Acc1, Acc1}] = tr:sorted_call_stat(fun(_) -> total end),
+    ?MODULE:factorial(1),
+    Pid ! {do_factorial, 1, self()},
+    receive {ok, _} -> ok end,
+    ct:pal("~p~n", [ets:tab2list(trace)]),
+    [{total, 5, Acc2, Acc2}] = tr:sorted_call_stat(fun(_) -> total end),
+    ?assertEqual(true, Acc1 < Acc2),
+    tr:stop_tracing_calls(),
+
+    %% Tracing disabled
+    Pid ! {do_factorial, 1, self()},
+    receive {ok, _} -> ok end,
+    ct:pal("~p~n", [ets:tab2list(trace)]),
+    [{total, 5, Acc2, Acc2}] = tr:sorted_call_stat(fun(_) -> total end),
+
+    %% Tracing enabled for a different function
+    tr:trace_calls([{?MODULE, factorial2, 1}]),
+    Pid ! {do_factorial, 1, self()},
+    receive {ok, _} -> ok end,
+    ct:pal("~p~n", [ets:tab2list(trace)]),
+    [{total, 5, Acc2, Acc2}] = tr:sorted_call_stat(fun(_) -> total end),
+    Pid ! stop,
     tr:stop_tracing_calls().
 
 acc_and_own_for_recursion(_Config) ->

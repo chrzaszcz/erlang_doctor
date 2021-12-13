@@ -6,6 +6,7 @@
 -export([start_link/0, start_link/1,
          start/0, start/1,
          trace_calls/1,
+         trace_calls/2,
          stop_tracing_calls/0,
          stop/0,
          tab/0,
@@ -135,6 +136,10 @@ start(Opts) ->
 -spec trace_calls([module()] | [{module(), atom(), non_neg_integer()}]) -> ok.
 trace_calls(Modules) ->
     gen_server:call(?MODULE, {start_trace, call, Modules}).
+
+-spec trace_calls([module()] | [{module(), atom(), non_neg_integer()}], [pid()]) -> ok.
+trace_calls(Modules, Pids) ->
+    gen_server:call(?MODULE, {start_trace, call, Modules, Pids}).
 
 -spec stop_tracing_calls() -> ok.
 stop_tracing_calls() ->
@@ -310,7 +315,11 @@ ts(#tr{ts = TS}) -> calendar:system_time_to_rfc3339(TS, [{unit, microsecond}]).
 
 -spec init(init_options()) -> {ok, map()}.
 init(Opts) ->
-    DefaultState = #{tab => default_tab(), index => initial_index(), traced_modules => [], limit => infinity},
+    DefaultState = #{tab => default_tab(),
+                     index => initial_index(),
+                     traced_modules => [],
+                     traced_pids => [],
+                     limit => infinity},
     State = #{tab := Tab} = maps:merge(DefaultState, Opts),
     create_tab(Tab),
     {ok, maps:merge(State, Opts)}.
@@ -318,6 +327,9 @@ init(Opts) ->
 -spec handle_call(any(), {pid(), any()}, map()) -> {reply, ok, map()}.
 handle_call({start_trace, call, Modules}, _From, State = #{traced_modules := []}) ->
     {reply, ok, start_trace(State, Modules)};
+handle_call({start_trace, call, Modules, Pids}, _From, State = #{traced_modules := [],
+                                                                 traced_pids := []}) ->
+    {reply, ok, start_trace(State, Modules, Pids)};
 handle_call({stop_trace, call}, _From, State) ->
     {reply, ok, stop_trace(State)};
 handle_call(clean, _From, State = #{tab := Tab}) ->
@@ -406,10 +418,19 @@ start_trace(State, ModSpecs) ->
     erlang:trace(all, true, [call, timestamp]),
     State#{traced_modules := ModSpecs}.
 
-stop_trace(State = #{traced_modules := ModSpecs}) ->
+start_trace(State, ModSpecs, Pids) ->
+    [enable_trace_pattern(ModSpec) || ModSpec <- ModSpecs],
+    [erlang:trace(Pid, true, [call, timestamp]) || Pid <- Pids],
+    State#{traced_modules := ModSpecs, traced_pids := Pids}.
+
+stop_trace(State = #{traced_modules := ModSpecs, traced_pids := []}) ->
     erlang:trace(all, false, [call, timestamp]),
     [disable_trace_pattern(ModSpec) || ModSpec <- ModSpecs],
-    State#{traced_modules := []}.
+    State#{traced_modules := []};
+stop_trace(State = #{traced_modules := ModSpecs, traced_pids := Pids}) ->
+    [erlang:trace(Pid, false, [call, timestamp]) || Pid <- Pids],
+    [disable_trace_pattern(ModSpec) || ModSpec <- ModSpecs],
+    State#{traced_modules := [], traced_pids := []}.
 
 enable_trace_pattern(ModSpec) ->
     {MFA = {M, _, _}, Opts} = trace_pattern_and_opts(ModSpec),
