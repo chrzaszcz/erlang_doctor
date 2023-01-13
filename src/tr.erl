@@ -5,8 +5,9 @@
 %% API - capturing, data manipulation
 -export([start_link/0, start_link/1,
          start/0, start/1,
-         trace_calls/1,
-         trace_calls/2,
+         trace_app/1,
+         trace_apps/1,
+         trace_calls/1, trace_calls/2,
          stop_tracing_calls/0,
          stop/0,
          tab/0,
@@ -132,6 +133,14 @@ start(Opts) ->
     gen_server:start({local, ?MODULE}, ?MODULE, Opts, []).
 
 -define(is_trace(Tr), element(1, (Tr)) =:= trace orelse element(1, (Tr)) =:= trace_ts).
+
+-spec trace_app(atom()) -> ok.
+trace_app(App) ->
+    trace_apps([App]).
+
+-spec trace_apps([atom()]) -> ok.
+trace_apps(Apps) ->
+    trace_calls(lists:flatmap(fun app_modules/1, Apps)).
 
 -spec trace_calls([module()] | [{module(), atom(), non_neg_integer()}]) -> ok.
 trace_calls(Modules) ->
