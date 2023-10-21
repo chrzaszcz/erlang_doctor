@@ -12,6 +12,9 @@ all() ->
      {group, utils},
      {group, call_tree_stat}].
 
+suite() ->
+    [{timetrap, {seconds, 30}}].
+
 groups() ->
     [{tracebacks, [single_tb,
                    tb,
@@ -54,6 +57,7 @@ do(_Config) ->
     tr:trace_calls([{?MODULE, fib, 1}]),
     ?MODULE:fib(2),
     tr:stop_tracing_calls(),
+    wait_for_changes(),
     MFA = {?MODULE, fib, 1},
     ct:pal("~p~n", [ets:tab2list(trace)]),
     [T1 = #tr{index = 1, event = call, mfa = MFA, data = [2]},
@@ -71,6 +75,7 @@ single_tb(_Config) ->
     tr:trace_calls([{?MODULE, fib, 1}]),
     ?MODULE:fib(4),
     tr:stop_tracing_calls(),
+    wait_for_changes(),
     ct:pal("~p~n", [ets:tab2list(trace)]),
     TB = tr:traceback(fun(#tr{event = return_from, data = N}) when N < 2 -> true end),
     ct:pal("~p~n", [TB]),
@@ -80,6 +85,7 @@ tb(_Config) ->
     tr:trace_calls([{?MODULE, fib, 1}]),
     ?MODULE:fib(4),
     tr:stop_tracing_calls(),
+    wait_for_changes(),
     ct:pal("~p~n", [ets:tab2list(trace)]),
     TBs = tr:tracebacks(fun(#tr{event = return_from, data = N}) when N < 2 -> true end),
     ct:pal("~p~n", [TBs]),
@@ -91,6 +97,7 @@ tb_bottom_up(_Config) ->
     tr:trace_calls([{?MODULE, fib, 1}]),
     ?MODULE:fib(4),
     tr:stop_tracing_calls(),
+    wait_for_changes(),
     ct:pal("~p~n", [ets:tab2list(trace)]),
     TBs = tr:tracebacks(fun(#tr{event = return_from, data = N}) when N < 2 -> true end,
                                #{order => bottom_up}),
@@ -103,6 +110,7 @@ tb_limit(_Config) ->
     tr:trace_calls([{?MODULE, fib, 1}]),
     ?MODULE:fib(4),
     tr:stop_tracing_calls(),
+    wait_for_changes(),
     ct:pal("~p~n", [ets:tab2list(trace)]),
     TBs = tr:tracebacks(fun(#tr{event = return_from, data = N}) when N < 2 -> true end,
                                #{limit => 3}),
@@ -113,6 +121,7 @@ tb_all(_Config) ->
     tr:trace_calls([{?MODULE, fib, 1}]),
     ?MODULE:fib(4),
     tr:stop_tracing_calls(),
+    wait_for_changes(),
     ct:pal("~p~n", [ets:tab2list(trace)]),
     TBs = tr:tracebacks(fun(#tr{event = return_from, data = N}) when N < 2 -> true end,
                                #{output => all}),
@@ -129,6 +138,7 @@ tb_longest(_Config) ->
     tr:trace_calls([{?MODULE, fib, 1}]),
     ?MODULE:fib(4),
     tr:stop_tracing_calls(),
+    wait_for_changes(),
     ct:pal("~p~n", [ets:tab2list(trace)]),
     TBs = tr:tracebacks(fun(#tr{event = return_from, data = N}) when N < 2 -> true end,
                                #{output => longest}),
@@ -143,6 +153,7 @@ tb_all_limit(_Config) ->
     tr:trace_calls([{?MODULE, fib, 1}]),
     ?MODULE:fib(4),
     tr:stop_tracing_calls(),
+    wait_for_changes(),
     ct:pal("~p~n", [ets:tab2list(trace)]),
     TBs = tr:tracebacks(fun(#tr{event = return_from, data = N}) when N < 2 -> true end,
                                #{limit => 3, output => all}),
@@ -155,6 +166,7 @@ tb_tree(_Config) ->
     tr:trace_calls([{?MODULE, fib, 1}]),
     ?MODULE:fib(4),
     tr:stop_tracing_calls(),
+    wait_for_changes(),
     ct:pal("~p~n", [ets:tab2list(trace)]),
     TBs = tr:tracebacks(fun(#tr{event = return_from, data = N}) when N < 2 -> true end,
                                #{format => tree}),
@@ -167,6 +179,7 @@ tb_tree_longest(_Config) ->
     tr:trace_calls([{?MODULE, fib, 1}]),
     ?MODULE:fib(4),
     tr:stop_tracing_calls(),
+    wait_for_changes(),
     ct:pal("~p~n", [ets:tab2list(trace)]),
     TBs = tr:tracebacks(fun(#tr{event = return_from, data = N}) when N < 2 -> true end,
                                #{format => tree, output => longest}),
@@ -182,26 +195,27 @@ tb_tree_longest(_Config) ->
 simple_total(_Config) ->
     tr:trace_calls([{?MODULE, factorial, 1}]),
     ?MODULE:factorial(2),
-    ct:sleep(10),
+    wait_for_changes(),
     ct:pal("~p~n", [ets:tab2list(trace)]),
     [{total, 3, Acc1, Acc1}] = tr:sorted_call_stat(fun(_) -> total end),
     ?MODULE:factorial(1),
-    ct:sleep(10),
+    wait_for_changes(),
     ct:pal("~p~n", [ets:tab2list(trace)]),
     [{total, 5, Acc2, Acc2}] = tr:sorted_call_stat(fun(_) -> total end),
     ?assertEqual(true, Acc1 < Acc2),
     tr:stop_tracing_calls(),
+wait_for_changes(),
 
     %% Tracing disabled
     ?MODULE:factorial(1),
-    ct:sleep(10),
+    wait_for_changes(),
     ct:pal("~p~n", [ets:tab2list(trace)]),
     [{total, 5, Acc2, Acc2}] = tr:sorted_call_stat(fun(_) -> total end),
 
     %% Tracing enabled for a different function
     tr:trace_calls([{?MODULE, factorial2, 1}]),
     ?MODULE:factorial(1),
-    ct:sleep(10),
+    wait_for_changes(),
     ct:pal("~p~n", [ets:tab2list(trace)]),
     [{total, 5, Acc2, Acc2}] = tr:sorted_call_stat(fun(_) -> total end),
     tr:stop_tracing_calls().
@@ -232,6 +246,7 @@ single_pid(_Config) ->
     [{total, 5, Acc2, Acc2}] = tr:sorted_call_stat(fun(_) -> total end),
     ?assertEqual(true, Acc1 < Acc2),
     tr:stop_tracing_calls(),
+    wait_for_changes(),
 
     %% Tracing disabled
     Pid ! {do_factorial, 1, self()},
@@ -251,8 +266,8 @@ single_pid(_Config) ->
 acc_and_own_for_recursion(_Config) ->
     tr:trace_calls([{?MODULE, sleepy_factorial, 1}]),
     ?MODULE:sleepy_factorial(2),
-    ct:sleep(10),
     tr:stop_tracing_calls(),
+    wait_for_changes(),
     Stat = tr:sorted_call_stat(fun(#tr{data = [Arg]}) -> Arg end),
     ct:pal("~p~n", [ets:tab2list(trace)]),
     ct:pal("Stat: ~p~n", [Stat]),
@@ -265,8 +280,8 @@ acc_and_own_for_recursion(_Config) ->
 acc_and_own_for_recursion_with_exception(_Config) ->
     tr:trace_calls([{?MODULE, bad_factorial, 1}]),
     catch ?MODULE:bad_factorial(2),
-    ct:sleep(10),
     tr:stop_tracing_calls(),
+    wait_for_changes(),
     Stat = tr:sorted_call_stat(fun(#tr{data = [Arg]}) -> Arg end),
     ct:pal("~p~n", [ets:tab2list(trace)]),
     ct:pal("Stat: ~p~n", [Stat]),
@@ -280,7 +295,7 @@ acc_and_own_for_indirect_recursion(_Config) ->
     tr:trace_calls([?MODULE]),
     ?MODULE:factorial_with_helper(2),
     tr:stop_tracing_calls(),
-    ct:sleep(10),
+    wait_for_changes(),
     Traces = ets:tab2list(trace),
     ct:pal("~p~n", [Traces]),
     [#tr{event = call, mfa = {_, factorial_with_helper, 1}, data = [2], ts = T1},
@@ -314,13 +329,16 @@ acc_and_own_for_indirect_recursion(_Config) ->
 interleave(_Config) ->
     tr:trace_calls([?MODULE]),
     Self = self(),
-    P1 = spawn(?MODULE, reply_after, [Self, 10]),
-    ct:sleep(5),
-    P2 = spawn(?MODULE, reply_after, [Self, 10]),
-    receive P1 -> ok end,
-    receive P2 -> ok end,
-    ct:sleep(10),
+    P1 = spawn_link(?MODULE, wait_and_reply, [Self]),
+    receive {started, P1} -> ok end,
+    P2 = spawn_link(?MODULE, wait_and_reply, [Self]),
+    receive {started, P2} -> ok end,
+    P1 ! reply,
+    receive {finished, P1} -> ok end,
+    P2 ! reply,
+    receive {finished, P2} -> ok end,
     tr:stop_tracing_calls(),
+    wait_for_changes(),
     ct:pal("~p~n", [ets:tab2list(trace)]),
     [#tr{pid = P1, event = call, ts = T1},
      #tr{pid = P2, event = call, ts = T2},
@@ -328,24 +346,27 @@ interleave(_Config) ->
      #tr{pid = P2, event = return_from, ts = T4}] = ets:tab2list(trace),
     Stat = tr:sorted_call_stat(fun(#tr{mfa = {_, F, _}, data = Data}) -> {F, Data} end),
     ct:pal("Stat: ~p~n", [Stat]),
-    [{{reply_after, [Self, 10]}, 2, DT, DT}] = Stat,
+    [{{wait_and_reply, [Self]}, 2, DT, DT}] = Stat,
     ?assertEqual(DT, (T3 - T1) + (T4 - T2)).
 
 call_without_return(_Config) ->
     tr:trace_calls([?MODULE]),
-    P1 = spawn(?MODULE, reply_after, [self(), 10]),
-    ct:sleep(5),
+    P1 = spawn_link(?MODULE, wait_and_reply, [self()]),
+    receive {started, P1} -> ok end,
     tr:stop_tracing_calls(),
-    receive P1 -> ok end,
+    wait_for_changes(),
+    P1 ! reply,
+    receive {finished, P1} -> ok end,
     ct:pal("~p~n", [ets:tab2list(trace)]).
 
 return_without_call(_Config) ->
-    P1 = spawn(?MODULE, reply_after, [self(), 100]),
-    ct:sleep(5),
+    P1 = spawn_link(?MODULE, wait_and_reply, [self()]),
+    receive {started, P1} -> ok end,
     tr:trace_calls([?MODULE]),
-    receive P1 -> ok end,
-    ct:sleep(10),
+    P1 ! reply,
+    receive {finished, P1} -> ok end,
     tr:stop_tracing_calls(),
+    wait_for_changes(),
     ct:pal("~p~n", [ets:tab2list(trace)]).
 
 dump_and_load(_Config) ->
@@ -353,6 +374,7 @@ dump_and_load(_Config) ->
     tr:trace_calls([{?MODULE, factorial, 1}]),
     factorial(1),
     tr:stop_tracing_calls(),
+    wait_for_changes(),
     BeforeDump = tr:sorted_call_stat(fun(_) -> total end),
     tr:dump(DumpFile),
     tr:load(DumpFile),
@@ -365,6 +387,7 @@ top_call_trees(_Config) ->
     ?MODULE:fib(3),
     ?MODULE:fib(4),
     tr:stop_tracing_calls(),
+    wait_for_changes(),
     ct:pal("~p~n", [ets:tab2list(trace)]),
     Top = tr:top_call_trees(),
     ct:pal("Top call_trees: ~p~n", [Top]),
@@ -411,6 +434,21 @@ fib(N) when N > 1 -> fib(N - 1) + fib(N - 2);
 fib(1) -> 1;
 fib(0) -> 0.
 
-reply_after(Sender, Delay) ->
-    timer:sleep(Delay),
-    Sender ! self().
+wait_and_reply(Sender) ->
+    Sender ! {started, self()},
+    receive reply -> ok end,
+    Sender ! {finished, self()}.
+
+wait_for_changes() ->
+    wait_for_changes(tr:tab(), 10, 10, nothing_yet).
+
+wait_for_changes(Table, Interval, Retries, LastResult) ->
+    timer:sleep(Interval),
+    case ets:info(Table, size) of
+        LastResult ->
+            ok;
+        NewResult when Retries > 0 ->
+            wait_for_changes(Table, Interval, Retries - 1, NewResult);
+        NewResult ->
+            ct:fail({"Table keeps changing", Table, NewResult})
+    end.
