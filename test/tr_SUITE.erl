@@ -208,16 +208,6 @@ simple_total(_Config) ->
     [{total, 5, Acc2, Acc2}] = tr:sorted_call_stat(fun(_) -> total end),
     tr:stop_tracing_calls().
 
-
-async_factorial() ->
-    receive
-        {do_factorial, N, From} ->
-            Res = ?MODULE:factorial(N),
-            From ! {ok, Res},
-            async_factorial();
-        stop -> ok
-    end.
-
 single_pid(_Config) ->
     Pid = spawn_link(fun ?MODULE:async_factorial/0),
     tr:trace_calls([{?MODULE, factorial, 1}], [Pid]),
@@ -333,13 +323,17 @@ interleave(_Config) ->
 
 call_without_return(_Config) ->
     tr:trace_calls([?MODULE]),
-    P1 = spawn_link(?MODULE, wait_and_reply, [self()]),
+    Self = self(),
+    P1 = spawn_link(?MODULE, wait_and_reply, [Self]),
     receive {started, P1} -> ok end,
     wait_for_traces(1),
     tr:stop_tracing_calls(),
     P1 ! reply,
     receive {finished, P1} -> ok end,
-    ct:pal("~p~n", [ets:tab2list(trace)]).
+    [#tr{pid = P1, event = call}] = tr:select(),
+    Stat = tr:sorted_call_stat(fun(#tr{mfa = {_, F, _}, data = Data}) -> {F, Data} end),
+    ct:pal("Stat: ~p~n", [Stat]),
+    ?assertEqual([{{wait_and_reply, [Self]}, 1, 0, 0}], Stat). % time is zero
 
 return_without_call(_Config) ->
     P1 = spawn_link(?MODULE, wait_and_reply, [self()]),
@@ -347,9 +341,12 @@ return_without_call(_Config) ->
     tr:trace_calls([?MODULE]),
     P1 ! reply,
     receive {finished, P1} -> ok end,
-    tr:stop_tracing_calls(),
     timer:sleep(10),
-    ct:pal("~p~n", [ets:tab2list(trace)]).
+    tr:stop_tracing_calls(),
+    [] = tr:select(), % return is not registered if call was not traced
+    Stat = tr:sorted_call_stat(fun(#tr{mfa = {_, F, _}, data = Data}) -> {F, Data} end),
+    ct:pal("Stat: ~p~n", [Stat]),
+    ?assertEqual([], Stat).
 
 dump_and_load(_Config) ->
     DumpFile = "dump",
@@ -388,6 +385,15 @@ top_call_trees(_Config) ->
 
 factorial(N) when N > 0 -> N * factorial(N - 1);
 factorial(0) -> 1.
+
+async_factorial() ->
+    receive
+        {do_factorial, N, From} ->
+            Res = ?MODULE:factorial(N),
+            From ! {ok, Res},
+            async_factorial();
+        stop -> ok
+    end.
 
 sleepy_factorial(N) when N > 0 ->
     timer:sleep(1),
