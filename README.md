@@ -70,6 +70,7 @@ ok
 You can provide `{Module, Function, Arity}` tuples in the list as well.
 To get a list of all modules from an application, use `tr:app_modules/1`.
 `tr:trace_calls(tr:app_modules(your_app))` would trace all modules from `your_app`.
+There is a shortcut as well: `tr:trace_app(your_app)`.
 
 Now we can call some functions - let's trace the following function call.
 It calculates the factorial recursively and sleeps 1 ms between each step.
