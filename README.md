@@ -14,7 +14,7 @@ Your Erlang Doctor is now ready to use!
 The easiest way to use it is the following:
 
 ```erlang
-tr:trace_calls([your_module]).
+tr:trace([your_module]).
 your_module:some_function().
 tr:select().
 ```
@@ -58,18 +58,18 @@ In this example we start the `tr` module in the simplest way:
 {ok, <0.218.0>}
 ```
 
-### Tracing function calls: `trace_calls`
+### Tracing function calls: `trace`
 
-To function calls for given modules, use `tr:trace_calls/1`, providing a list of traced modules:
+To function calls for given modules, use `tr:trace/1`, providing a list of traced modules:
 
 ```erlang
-3> tr:trace_calls([tr_SUITE]).
+3> tr:trace([tr_SUITE]).
 ok
 ```
 
 You can provide `{Module, Function, Arity}` tuples in the list as well.
 To get a list of all modules from an application, use `tr:app_modules/1`.
-`tr:trace_calls(tr:app_modules(your_app))` would trace all modules from `your_app`.
+`tr:trace(tr:app_modules(your_app))` would trace all modules from `your_app`.
 There is a shortcut as well: `tr:trace_app(your_app)`.
 
 Now we can call some functions - let's trace the following function call.
@@ -85,7 +85,7 @@ It calculates the factorial recursively and sleeps 1 ms between each step.
 Stop tracing with the following function:
 
 ```erlang
-5> tr:stop_tracing_calls().
+5> tr:stop_tracing().
 ok
 ```
 
@@ -94,7 +94,7 @@ Usage of `tr` on production systems is risky, but if you have to do it, start an
 e.g. for one second with:
 
 ```erlang
-tr:trace_calls(Modules), timer:sleep(1000), tr:stop_tracing_calls().
+tr:trace(Modules), timer:sleep(1000), tr:stop_tracing().
 ```
 
 ## Debugging: data analysis
@@ -413,11 +413,11 @@ As an example, let's trace the call to a function which calculates the 4th eleme
 in a recursive way. Erlang Doctor has to be started and the trace table should be empty.
 
 ```erlang
-5> tr:trace_calls([tr_SUITE]).
+5> tr:trace([tr_SUITE]).
 ok
 6> tr_SUITE:fib(4).
 5
-7> tr:stop_tracing_calls().
+7> tr:stop_tracing().
 ```
 
 Now it is possible to print the most time consuming call trees that repeat at least twice:
@@ -475,7 +475,7 @@ ok
 Now you can collect traces to the new table without changing the original one.
 
 ```erlang
-24> tr:trace_calls([lists]), lists:seq(1, 10), tr:stop_tracing_calls().
+24> tr:trace([lists]), lists:seq(1, 10), tr:stop_tracing().
 ok
 25> tr:select().
 [#tr{index = 1, pid = <0.175.0>, event = call,
@@ -537,7 +537,7 @@ As this messages appear every 10 seconds (on each attempt to reconnect to LDAP),
 The most lkely culprit is the `mongoose_ldap_worker` module, so let's trace it:
 
 ```erlang
-(mongooseim@localhost)16> tr:trace_calls([mongoose_ldap_worker]).
+(mongooseim@localhost)16> tr:trace([mongoose_ldap_worker]).
 ok
 ```
 

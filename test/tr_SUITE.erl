@@ -56,10 +56,10 @@ end_per_testcase(_TC, _Config) ->
 %% Test cases
 
 do(_Config) ->
-    tr:trace_calls([{?MODULE, fib, 1}]),
+    tr:trace([{?MODULE, fib, 1}]),
     ?MODULE:fib(2),
     wait_for_traces(6),
-    tr:stop_tracing_calls(),
+    tr:stop_tracing(),
     MFA = {?MODULE, fib, 1},
     [T1 = #tr{index = 1, event = call, mfa = MFA, data = [2]},
      #tr{index = 2, event = call, mfa = MFA, data = [1]},
@@ -73,19 +73,19 @@ do(_Config) ->
     0 = tr:do(4).
 
 single_tb(_Config) ->
-    tr:trace_calls([{?MODULE, fib, 1}]),
+    tr:trace([{?MODULE, fib, 1}]),
     ?MODULE:fib(4),
     wait_for_traces(18),
-    tr:stop_tracing_calls(),
+    tr:stop_tracing(),
     TB = tr:traceback(fun(#tr{event = return_from, data = N}) when N < 2 -> true end),
     ct:pal("~p~n", [TB]),
     ?assertMatch([#tr{data = [1]}, #tr{data = [2]}, #tr{data = [3]}, #tr{data = [4]}], TB).
 
 tb(_Config) ->
-    tr:trace_calls([{?MODULE, fib, 1}]),
+    tr:trace([{?MODULE, fib, 1}]),
     ?MODULE:fib(4),
     wait_for_traces(18),
-    tr:stop_tracing_calls(),
+    tr:stop_tracing(),
     TBs = tr:tracebacks(fun(#tr{event = return_from, data = N}) when N < 2 -> true end),
     ct:pal("~p~n", [TBs]),
     ?assertMatch([[#tr{data = [2]}, #tr{data = [3]}, #tr{data = [4]}],
@@ -93,10 +93,10 @@ tb(_Config) ->
                   [#tr{data = [2]}, #tr{data = [4]}]], TBs).
 
 tb_bottom_up(_Config) ->
-    tr:trace_calls([{?MODULE, fib, 1}]),
+    tr:trace([{?MODULE, fib, 1}]),
     ?MODULE:fib(4),
     wait_for_traces(18),
-    tr:stop_tracing_calls(),
+    tr:stop_tracing(),
     TBs = tr:tracebacks(fun(#tr{event = return_from, data = N}) when N < 2 -> true end,
                                #{order => bottom_up}),
     ct:pal("~p~n", [TBs]),
@@ -105,20 +105,20 @@ tb_bottom_up(_Config) ->
                   [#tr{data = [4]}, #tr{data = [2]}]], TBs).
 
 tb_limit(_Config) ->
-    tr:trace_calls([{?MODULE, fib, 1}]),
+    tr:trace([{?MODULE, fib, 1}]),
     ?MODULE:fib(4),
     wait_for_traces(18),
-    tr:stop_tracing_calls(),
+    tr:stop_tracing(),
     TBs = tr:tracebacks(fun(#tr{event = return_from, data = N}) when N < 2 -> true end,
                                #{limit => 3}),
     ct:pal("~p~n", [TBs]),
     ?assertMatch([[#tr{data = [2]}, #tr{data = [3]}, #tr{data = [4]}]], TBs).
 
 tb_all(_Config) ->
-    tr:trace_calls([{?MODULE, fib, 1}]),
+    tr:trace([{?MODULE, fib, 1}]),
     ?MODULE:fib(4),
     wait_for_traces(18),
-    tr:stop_tracing_calls(),
+    tr:stop_tracing(),
     TBs = tr:tracebacks(fun(#tr{event = return_from, data = N}) when N < 2 -> true end,
                                #{output => all}),
     ct:pal("~p~n", [TBs]),
@@ -131,10 +131,10 @@ tb_all(_Config) ->
                   [#tr{data = [2]}, #tr{data = [4]}]], TBs).
 
 tb_longest(_Config) ->
-    tr:trace_calls([{?MODULE, fib, 1}]),
+    tr:trace([{?MODULE, fib, 1}]),
     ?MODULE:fib(4),
     wait_for_traces(18),
-    tr:stop_tracing_calls(),
+    tr:stop_tracing(),
     TBs = tr:tracebacks(fun(#tr{event = return_from, data = N}) when N < 2 -> true end,
                                #{output => longest}),
     ct:pal("~p~n", [TBs]),
@@ -145,10 +145,10 @@ tb_longest(_Config) ->
                   [#tr{data = [0]}, #tr{data = [2]}, #tr{data = [4]}]], TBs).
 
 tb_all_limit(_Config) ->
-    tr:trace_calls([{?MODULE, fib, 1}]),
+    tr:trace([{?MODULE, fib, 1}]),
     ?MODULE:fib(4),
     wait_for_traces(18),
-    tr:stop_tracing_calls(),
+    tr:stop_tracing(),
     TBs = tr:tracebacks(fun(#tr{event = return_from, data = N}) when N < 2 -> true end,
                                #{limit => 3, output => all}),
     ct:pal("~p~n", [TBs]),
@@ -157,10 +157,10 @@ tb_all_limit(_Config) ->
                   [#tr{data = [2]}, #tr{data = [3]}, #tr{data = [4]}]], TBs).
 
 tb_tree(_Config) ->
-    tr:trace_calls([{?MODULE, fib, 1}]),
+    tr:trace([{?MODULE, fib, 1}]),
     ?MODULE:fib(4),
     wait_for_traces(18),
-    tr:stop_tracing_calls(),
+    tr:stop_tracing(),
     TBs = tr:tracebacks(fun(#tr{event = return_from, data = N}) when N < 2 -> true end,
                                #{format => tree}),
     ct:pal("~p~n", [TBs]),
@@ -169,10 +169,10 @@ tb_tree(_Config) ->
                                      #tr{data = [2]}]}], TBs).
 
 tb_tree_longest(_Config) ->
-    tr:trace_calls([{?MODULE, fib, 1}]),
+    tr:trace([{?MODULE, fib, 1}]),
     ?MODULE:fib(4),
     wait_for_traces(18),
-    tr:stop_tracing_calls(),
+    tr:stop_tracing(),
     TBs = tr:tracebacks(fun(#tr{event = return_from, data = N}) when N < 2 -> true end,
                                #{format => tree, output => longest}),
     TBs = tr:tracebacks(fun(#tr{event = return_from, data = N}) when N < 2 -> true end,
@@ -185,7 +185,7 @@ tb_tree_longest(_Config) ->
                                                         #tr{data = [0]}]}]}], TBs).
 
 simple_total(_Config) ->
-    tr:trace_calls([{?MODULE, factorial, 1}]),
+    tr:trace([{?MODULE, factorial, 1}]),
     ?MODULE:factorial(2),
     wait_for_traces(6),
     [{total, 3, Acc1, Acc1}] = tr:sorted_call_stat(fun(_) -> total end),
@@ -193,7 +193,7 @@ simple_total(_Config) ->
     wait_for_traces(10),
     [{total, 5, Acc2, Acc2}] = tr:sorted_call_stat(fun(_) -> total end),
     ?assertEqual(true, Acc1 < Acc2),
-    tr:stop_tracing_calls(),
+    tr:stop_tracing(),
     timer:sleep(10),
 
     %% Tracing disabled
@@ -202,15 +202,15 @@ simple_total(_Config) ->
     [{total, 5, Acc2, Acc2}] = tr:sorted_call_stat(fun(_) -> total end),
 
     %% Tracing enabled for a different function
-    tr:trace_calls([{?MODULE, factorial2, 1}]),
+    tr:trace([{?MODULE, factorial2, 1}]),
     ?MODULE:factorial(1),
     timer:sleep(10),
     [{total, 5, Acc2, Acc2}] = tr:sorted_call_stat(fun(_) -> total end),
-    tr:stop_tracing_calls().
+    tr:stop_tracing().
 
 single_pid(_Config) ->
     Pid = spawn_link(fun ?MODULE:async_factorial/0),
-    tr:trace_calls([{?MODULE, factorial, 1}], [Pid]),
+    tr:trace([{?MODULE, factorial, 1}], [Pid]),
     %% call factorial within the pid and outside of it
     ?MODULE:factorial(2),
     Pid ! {do_factorial, 2, self()},
@@ -222,7 +222,7 @@ single_pid(_Config) ->
     receive {ok, _} -> ok end,
     [{total, 5, Acc2, Acc2}] = tr:sorted_call_stat(fun(_) -> total end),
     ?assertEqual(true, Acc1 < Acc2),
-    tr:stop_tracing_calls(),
+    tr:stop_tracing(),
     wait_for_traces(10),
 
     %% Tracing disabled
@@ -231,18 +231,18 @@ single_pid(_Config) ->
     [{total, 5, Acc2, Acc2}] = tr:sorted_call_stat(fun(_) -> total end),
 
     %% Tracing enabled for a different function
-    tr:trace_calls([{?MODULE, factorial2, 1}]),
+    tr:trace([{?MODULE, factorial2, 1}]),
     Pid ! {do_factorial, 1, self()},
     receive {ok, _} -> ok end,
     [{total, 5, Acc2, Acc2}] = tr:sorted_call_stat(fun(_) -> total end),
     Pid ! stop,
-    tr:stop_tracing_calls().
+    tr:stop_tracing().
 
 acc_and_own_for_recursion(_Config) ->
-    tr:trace_calls([{?MODULE, sleepy_factorial, 1}]),
+    tr:trace([{?MODULE, sleepy_factorial, 1}]),
     ?MODULE:sleepy_factorial(2),
     wait_for_traces(6),
-    tr:stop_tracing_calls(),
+    tr:stop_tracing(),
     Stat = tr:sorted_call_stat(fun(#tr{data = [Arg]}) -> Arg end),
     ct:pal("Stat: ~p~n", [Stat]),
     [{2, 1, Acc2, Own2},
@@ -252,10 +252,10 @@ acc_and_own_for_recursion(_Config) ->
     ?assertEqual(Acc1, Own1 + Acc0).
 
 acc_and_own_for_recursion_with_exception(_Config) ->
-    tr:trace_calls([{?MODULE, bad_factorial, 1}]),
+    tr:trace([{?MODULE, bad_factorial, 1}]),
     catch ?MODULE:bad_factorial(2),
     wait_for_traces(6),
-    tr:stop_tracing_calls(),
+    tr:stop_tracing(),
     Stat = tr:sorted_call_stat(fun(#tr{data = [Arg]}) -> Arg end),
     ct:pal("Stat: ~p~n", [Stat]),
     [{2, 1, Acc2, Own2},
@@ -265,10 +265,10 @@ acc_and_own_for_recursion_with_exception(_Config) ->
     ?assertEqual(Acc1, Own1 + Acc0).
 
 acc_and_own_for_indirect_recursion(_Config) ->
-    tr:trace_calls([?MODULE]),
+    tr:trace([?MODULE]),
     ?MODULE:factorial_with_helper(2),
     wait_for_traces(10),
-    tr:stop_tracing_calls(),
+    tr:stop_tracing(),
     Traces = ets:tab2list(trace),
     ct:pal("~p~n", [Traces]),
     [#tr{event = call, mfa = {_, factorial_with_helper, 1}, data = [2], ts = T1},
@@ -300,7 +300,7 @@ acc_and_own_for_indirect_recursion(_Config) ->
     ?assertEqual(OwnF2, (T3 - T2) + (T5 - T4) + (T7 - T6) + (T9 - T8)).
 
 interleave(_Config) ->
-    tr:trace_calls([?MODULE]),
+    tr:trace([?MODULE]),
     Self = self(),
     P1 = spawn_link(?MODULE, wait_and_reply, [Self]),
     receive {started, P1} -> ok end,
@@ -311,7 +311,7 @@ interleave(_Config) ->
     P2 ! reply,
     receive {finished, P2} -> ok end,
     wait_for_traces(4),
-    tr:stop_tracing_calls(),
+    tr:stop_tracing(),
     [#tr{pid = P1, event = call, ts = T1},
      #tr{pid = P2, event = call, ts = T2},
      #tr{pid = P1, event = return_from, ts = T3},
@@ -322,12 +322,12 @@ interleave(_Config) ->
     ?assertEqual(DT, (T3 - T1) + (T4 - T2)).
 
 call_without_return(_Config) ->
-    tr:trace_calls([?MODULE]),
+    tr:trace([?MODULE]),
     Self = self(),
     P1 = spawn_link(?MODULE, wait_and_reply, [Self]),
     receive {started, P1} -> ok end,
     wait_for_traces(1),
-    tr:stop_tracing_calls(),
+    tr:stop_tracing(),
     P1 ! reply,
     receive {finished, P1} -> ok end,
     [#tr{pid = P1, event = call}] = tr:select(),
@@ -338,11 +338,11 @@ call_without_return(_Config) ->
 return_without_call(_Config) ->
     P1 = spawn_link(?MODULE, wait_and_reply, [self()]),
     receive {started, P1} -> ok end,
-    tr:trace_calls([?MODULE]),
+    tr:trace([?MODULE]),
     P1 ! reply,
     receive {finished, P1} -> ok end,
     timer:sleep(10),
-    tr:stop_tracing_calls(),
+    tr:stop_tracing(),
     [] = tr:select(), % return is not registered if call was not traced
     Stat = tr:sorted_call_stat(fun(#tr{mfa = {_, F, _}, data = Data}) -> {F, Data} end),
     ct:pal("Stat: ~p~n", [Stat]),
@@ -350,10 +350,10 @@ return_without_call(_Config) ->
 
 dump_and_load(_Config) ->
     DumpFile = "dump",
-    tr:trace_calls([{?MODULE, factorial, 1}]),
+    tr:trace([{?MODULE, factorial, 1}]),
     factorial(1),
     wait_for_traces(4),
-    tr:stop_tracing_calls(),
+    tr:stop_tracing(),
     BeforeDump = tr:sorted_call_stat(fun(_) -> total end),
     tr:dump(DumpFile),
     tr:load(DumpFile),
@@ -362,11 +362,11 @@ dump_and_load(_Config) ->
     file:delete(DumpFile).
 
 top_call_trees(_Config) ->
-    tr:trace_calls([?MODULE]),
+    tr:trace([?MODULE]),
     ?MODULE:fib(3),
     ?MODULE:fib(4),
     wait_for_traces(28),
-    tr:stop_tracing_calls(),
+    tr:stop_tracing(),
     N = #node{module = ?MODULE, function = fib},
     Fib0 = N#node{args = [0], result = {return, 0}},
     Fib1 = N#node{args = [1], result = {return, 1}},

@@ -7,8 +7,8 @@
          start/0, start/1,
          trace_app/1,
          trace_apps/1,
-         trace_calls/1, trace_calls/2,
-         stop_tracing_calls/0,
+         trace/1, trace/2,
+         stop_tracing/0,
          stop/0,
          tab/0,
          set_tab/1,
@@ -140,18 +140,18 @@ trace_app(App) ->
 
 -spec trace_apps([atom()]) -> ok.
 trace_apps(Apps) ->
-    trace_calls(lists:flatmap(fun app_modules/1, Apps)).
+    trace(lists:flatmap(fun app_modules/1, Apps)).
 
--spec trace_calls([module()] | [{module(), atom(), non_neg_integer()}]) -> ok.
-trace_calls(Modules) ->
+-spec trace([module()] | [{module(), atom(), non_neg_integer()}]) -> ok.
+trace(Modules) ->
     gen_server:call(?MODULE, {start_trace, call, Modules}).
 
--spec trace_calls([module()] | [{module(), atom(), non_neg_integer()}], [pid()]) -> ok.
-trace_calls(Modules, Pids) ->
+-spec trace([module()] | [{module(), atom(), non_neg_integer()}], [pid()]) -> ok.
+trace(Modules, Pids) ->
     gen_server:call(?MODULE, {start_trace, call, Modules, Pids}).
 
--spec stop_tracing_calls() -> ok.
-stop_tracing_calls() ->
+-spec stop_tracing() -> ok.
+stop_tracing() ->
     gen_server:call(?MODULE, {stop_trace, call}).
 
 -spec stop() -> ok.
