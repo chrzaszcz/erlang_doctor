@@ -104,7 +104,7 @@ They are stored as `#tr` records with the following fields:
 
 - `index`: trace identifier, auto-incremented for each received trace
 - `pid`: process ID associated with the trace
-- `event`: `call`, `return_from` or `exception_from`
+- `event`: `call`, `return` or `exception`
 - `mfa`: an MFA tuple: module name, function name and function arity
 - `data`: argument list (for calls), returned value (for returns) or class and value (for exceptions)
 - `timestamp` in microseconds
@@ -140,16 +140,16 @@ Use `tr:select/0` to select all collected traces.
      mfa = {tr_SUITE, sleepy_factorial, 1},
      data = [0],
      ts = 1559134178223107},
- #tr{index = 5, pid = <0.175.0>, event = return_from,
+ #tr{index = 5, pid = <0.175.0>, event = return,
      mfa = {tr_SUITE, sleepy_factorial, 1},
      data = 1, ts = 1559134178225146},
- #tr{index = 6, pid = <0.175.0>, event = return_from,
+ #tr{index = 6, pid = <0.175.0>, event = return,
      mfa = {tr_SUITE, sleepy_factorial, 1},
      data = 1, ts = 1559134178225153},
- #tr{index = 7, pid = <0.175.0>, event = return_from,
+ #tr{index = 7, pid = <0.175.0>, event = return,
      mfa = {tr_SUITE, sleepy_factorial, 1},
      data = 2, ts = 1559134178225155},
- #tr{index = 8, pid = <0.175.0>, event = return_from,
+ #tr{index = 8, pid = <0.175.0>, event = return,
      mfa = {tr_SUITE, sleepy_factorial, 1},
      data = 6, ts = 1559134178225156}]
 ```
@@ -170,7 +170,7 @@ Use `tr:select/2` to further filter the results by searching for a term in `#tr.
      mfa = {tr_SUITE, sleepy_factorial, 1},
      data = [2],
      ts = 1559134178219102},
- #tr{index = 7, pid = <0.175.0>, event = return_from,
+ #tr{index = 7, pid = <0.175.0>, event = return,
      mfa = {tr_SUITE, sleepy_factorial, 1},
      data = 2, ts = 1559134178225155}]
 ```
@@ -185,7 +185,7 @@ Sometimes it might be easier to use `tr:filter/1`. You can use e.g. `tr:contains
      mfa = {tr_SUITE, sleepy_factorial, 1},
      data = [2],
      ts = 1559134178219102},
- #tr{index = 7, pid = <0.175.0>, event = return_from,
+ #tr{index = 7, pid = <0.175.0>, event = return,
      mfa = {tr_SUITE, sleepy_factorial, 1},
      data = 2, ts = 1559134178225155}]
 ```
@@ -305,10 +305,10 @@ To get the whole traces between the matching call and the corresponding return, 
       mfa = {tr_SUITE, sleepy_factorial, 1},
       data = [0],
       ts = 1559134178223107},
-  #tr{index = 5, pid = <0.175.0>, event = return_from,
+  #tr{index = 5, pid = <0.175.0>, event = return,
       mfa = {tr_SUITE, sleepy_factorial, 1},
       data = 1, ts = 1559134178225146},
-  #tr{index = 6, pid = <0.175.0>, event = return_from,
+  #tr{index = 6, pid = <0.175.0>, event = return,
       mfa = {tr_SUITE, sleepy_factorial, 1},
       data = 1, ts = 1559134178225153}]]
 ```
@@ -545,7 +545,7 @@ A few seconds (and error messages) later we can check the traces for the `badkey
 
 ```erlang
 (mongooseim@localhost)17> tr:filter(fun(T) -> tr:contains_data(badkey, T) end).
-[#tr{index = 255, pid = <0.8118.1>, event = exception_from,
+[#tr{index = 255, pid = <0.8118.1>, event = exception,
      mfa = {mongoose_ldap_worker, connect, 1},
      data = {error, {badkey, handle}},
      ts = 1557838064073778},

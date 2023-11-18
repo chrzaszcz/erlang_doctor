@@ -51,12 +51,12 @@
 %% copied, not included from tr.hrl to make it self-contained
 -record(tr, {index :: pos_integer(),
              pid :: pid(),
-             event :: call | return_from | exception_from,
+             event :: call | return | exception,
              mfa :: {module(), atom(), non_neg_integer()},
              data :: term(),
              ts :: integer()}).
 
--define(is_return(Event), (Event =:= return_from orelse Event =:= exception_from)).
+-define(is_return(Event), (Event =:= return orelse Event =:= exception)).
 
 -type tr() :: #tr{}.
 -type pred() :: fun((tr()) -> boolean()).
@@ -462,12 +462,12 @@ handle_trace({trace_ts, Pid, call, MFA = {_, _, Args}, TS}, #{tab := Tab, index 
     State#{index := NextIndex};
 handle_trace({trace_ts, Pid, return_from, MFArity, Res, TS}, #{tab := Tab, index := I} = State) ->
     NextIndex = next_index(I),
-    ets:insert(Tab, #tr{index = NextIndex, pid = Pid, event = return_from, mfa = MFArity, data = Res,
+    ets:insert(Tab, #tr{index = NextIndex, pid = Pid, event = return, mfa = MFArity, data = Res,
                         ts = usec_from_now(TS)}),
     State#{index := NextIndex};
 handle_trace({trace_ts, Pid, exception_from, MFArity, {Class, Value}, TS}, #{tab := Tab, index := I} = State) ->
     NextIndex = next_index(I),
-    ets:insert(Tab, #tr{index = NextIndex, pid = Pid, event = exception_from, mfa = MFArity, data = {Class, Value},
+    ets:insert(Tab, #tr{index = NextIndex, pid = Pid, event = exception, mfa = MFArity, data = {Class, Value},
                         ts = usec_from_now(TS)}),
     State#{index := NextIndex};
 handle_trace(Trace, State) ->
@@ -688,9 +688,9 @@ call_tree_stat_step(Tr = #tr{pid = Pid, ts = TS}, State = #{pid_states := PidSta
 -spec simplify_trace_item(tr()) -> simple_tr().
 simplify_trace_item(#tr{event = call, mfa = MFA, data = Args}) ->
     {call, mfa(MFA, Args)};
-simplify_trace_item(#tr{event = return_from, data = Value}) ->
+simplify_trace_item(#tr{event = return, data = Value}) ->
     {return, Value};
-simplify_trace_item(#tr{event = exception_from, data = Value}) ->
+simplify_trace_item(#tr{event = exception, data = Value}) ->
     {exception, Value}.
 
 -spec update_call_trees(simple_tr(), integer(), pid_call_state()) ->
