@@ -52,7 +52,7 @@
 -record(tr, {index :: pos_integer(),
              pid :: pid(),
              event :: call | return | exception,
-             mfa :: {module(), atom(), non_neg_integer()},
+             mfa :: mfa(),
              data :: term(),
              ts :: integer()}).
 
@@ -65,19 +65,28 @@
 -type acc_time() :: non_neg_integer().
 -type own_time() :: non_neg_integer().
 -type pids() :: [pid()] | all.
+-type limit() :: pos_integer() | infinity. % used for a few different limits
+-type index() :: non_neg_integer().
 
 -type init_options() :: #{tab => atom(),
-                          index => non_neg_integer(),
-                          limit => infinity | pos_integer()}.
+                          index => index(),
+                          limit => limit()}.
+-type state() :: #{tab := atom(),
+                   index := index(),
+                   limit := limit(),
+                   trace := none | trace_spec()}.
+-type trace_spec() :: #{modules := module_spec(),
+                        pids := pids()}.
+-type module_spec() :: [module() | mfa()].
 
 -type range_options() :: #{tab => atom() | [tr()],
-                           max_depth => infinity | pos_integer()}.
+                           max_depth => limit()}.
 
 -type tb_options() :: #{tab => atom() | [tr()],
                         output => tb_output(),
                         format => tb_format(),
                         order => tb_order(),
-                        limit => infinity | pos_integer()}.
+                        limit => limit()}.
 -type tb_output() :: shortest | longest | all.
 -type tb_format() :: tree | list.
 -type tb_order() :: top_down | bottom_up.
@@ -121,7 +130,7 @@
 start_link() ->
     start_link(#{}).
 
--spec start_link(map()) -> {ok, pid()}.
+-spec start_link(init_options()) -> {ok, pid()}.
 start_link(Opts) ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, Opts, []).
 
@@ -143,11 +152,11 @@ trace_app(App) ->
 trace_apps(Apps) ->
     trace(lists:flatmap(fun app_modules/1, Apps)).
 
--spec trace([module()] | [{module(), atom(), non_neg_integer()}]) -> ok.
+-spec trace(module_spec()) -> ok.
 trace(Modules) ->
     gen_server:call(?MODULE, {start_trace, call, #{modules => Modules}}).
 
--spec trace([module()] | [{module(), atom(), non_neg_integer()}], pids()) -> ok.
+-spec trace(module_spec(), pids()) -> ok.
 trace(Modules, Pids) ->
     gen_server:call(?MODULE, {start_trace, call, #{modules => Modules,
                                                    pids => Pids}}).
@@ -309,13 +318,13 @@ app_modules(AppName) ->
 
 -spec mfarity({M, F, Arity | Args}) -> {M, F, Arity} when M :: atom(),
                                                           F :: atom(),
-                                                          Arity :: non_neg_integer(),
+                                                          Arity :: arity(),
                                                           Args :: list().
 mfarity({M, F, A}) -> {M, F, maybe_length(A)}.
 
 -spec mfa({M, F, Arity}, Args) -> {M, F, Args} when M :: atom(),
                                                     F :: atom(),
-                                                    Arity :: non_neg_integer(),
+                                                    Arity :: arity(),
                                                     Args :: list().
 mfa({M, F, Arity}, Args) when length(Args) =:= Arity -> {M, F, Args}.
 
@@ -324,17 +333,17 @@ ts(#tr{ts = TS}) -> calendar:system_time_to_rfc3339(TS, [{unit, microsecond}]).
 
 %% gen_server callbacks
 
--spec init(init_options()) -> {ok, map()}.
+-spec init(init_options()) -> {ok, state()}.
 init(Opts) ->
     DefaultState = #{tab => default_tab(),
                      index => initial_index(),
-                     trace => none,
-                     limit => infinity},
+                     limit => infinity,
+                     trace => none},
     State = #{tab := Tab} = maps:merge(DefaultState, Opts),
     create_tab(Tab),
     {ok, maps:merge(State, Opts)}.
 
--spec handle_call(any(), {pid(), any()}, map()) -> {reply, ok, map()}.
+-spec handle_call(any(), {pid(), any()}, state()) -> {reply, ok, state()}.
 handle_call({start_trace, call, Opts}, _From, State = #{trace := none}) ->
     DefaultOpts = #{modules => [], pids => all},
     {reply, ok, start_trace(State, maps:merge(DefaultOpts, Opts))};
@@ -362,13 +371,12 @@ handle_call(Req, From, State) ->
     logger:error("Unexpected call ~p from ~p.", [Req, From]),
     {reply, ok, State}.
 
--spec handle_cast(any(), map()) -> {noreply, map()}.
+-spec handle_cast(any(), state()) -> {noreply, state()}.
 handle_cast(Msg, State) ->
     logger:error("Unexpected message ~p.", [Msg]),
     {noreply, State}.
 
--spec handle_info(any(), map()) -> {noreply, map()}.
-
+-spec handle_info(any(), state()) -> {noreply, state()}.
 handle_info(Trace, State = #{trace := none}) when ?is_trace(Trace) ->
     {noreply, State};
 handle_info(Trace, State = #{index := I, limit := Limit}) when ?is_trace(Trace), I >= Limit ->
@@ -380,11 +388,11 @@ handle_info(Msg, State) ->
     logger:error("Unexpected message ~p.", [Msg]),
     {noreply, State}.
 
--spec terminate(any(), map()) -> ok.
+-spec terminate(any(), state()) -> ok.
 terminate(_Reason, #{}) ->
     ok.
 
--spec code_change(any(), map(), any()) -> {ok, map()}.
+-spec code_change(any(), state(), any()) -> {ok, state()}.
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
@@ -421,11 +429,13 @@ index(Tab) ->
         _ -> initial_index()
     end.
 
-start_trace(State, Opts = #{modules := ModSpecs, pids := Pids}) ->
+-spec start_trace(state(), trace_spec()) -> state().
+start_trace(State, Spec = #{modules := ModSpecs, pids := Pids}) ->
     [enable_trace_pattern(ModSpec) || ModSpec <- ModSpecs],
     trace_pids(Pids, true, [call, timestamp]),
-    State#{trace := Opts}.
+    State#{trace := Spec}.
 
+-spec stop_trace(state()) -> state().
 stop_trace(State = #{trace := #{modules := ModSpecs, pids := Pids}}) ->
     trace_pids(Pids, false, [call, timestamp]),
     [disable_trace_pattern(ModSpec) || ModSpec <- ModSpecs],
@@ -786,11 +796,11 @@ insert_top_call_trees_item(TreeItem, Set, MaxSize) ->
 
 %% Helpers
 
--spec initial_index() -> non_neg_integer().
+-spec initial_index() -> index().
 initial_index() ->
     0.
 
--spec next_index(non_neg_integer()) -> non_neg_integer().
+-spec next_index(index()) -> index().
 next_index(I) ->
     I + 1.
 
