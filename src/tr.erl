@@ -64,6 +64,7 @@
 -type call_count() :: non_neg_integer().
 -type acc_time() :: non_neg_integer().
 -type own_time() :: non_neg_integer().
+-type pids() :: [pid()] | all.
 
 -type init_options() :: #{tab => atom(),
                           index => non_neg_integer(),
@@ -144,11 +145,12 @@ trace_apps(Apps) ->
 
 -spec trace([module()] | [{module(), atom(), non_neg_integer()}]) -> ok.
 trace(Modules) ->
-    gen_server:call(?MODULE, {start_trace, call, Modules}).
+    gen_server:call(?MODULE, {start_trace, call, #{modules => Modules}}).
 
--spec trace([module()] | [{module(), atom(), non_neg_integer()}], [pid()]) -> ok.
+-spec trace([module()] | [{module(), atom(), non_neg_integer()}], pids()) -> ok.
 trace(Modules, Pids) ->
-    gen_server:call(?MODULE, {start_trace, call, Modules, Pids}).
+    gen_server:call(?MODULE, {start_trace, call, #{modules => Modules,
+                                                   pids => Pids}}).
 
 -spec stop_tracing() -> ok.
 stop_tracing() ->
@@ -326,20 +328,17 @@ ts(#tr{ts = TS}) -> calendar:system_time_to_rfc3339(TS, [{unit, microsecond}]).
 init(Opts) ->
     DefaultState = #{tab => default_tab(),
                      index => initial_index(),
-                     traced_modules => [],
-                     traced_pids => [],
+                     trace => none,
                      limit => infinity},
     State = #{tab := Tab} = maps:merge(DefaultState, Opts),
     create_tab(Tab),
     {ok, maps:merge(State, Opts)}.
 
 -spec handle_call(any(), {pid(), any()}, map()) -> {reply, ok, map()}.
-handle_call({start_trace, call, Modules}, _From, State = #{traced_modules := []}) ->
-    {reply, ok, start_trace(State, Modules)};
-handle_call({start_trace, call, Modules, Pids}, _From, State = #{traced_modules := [],
-                                                                 traced_pids := []}) ->
-    {reply, ok, start_trace(State, Modules, Pids)};
-handle_call({stop_trace, call}, _From, State) ->
+handle_call({start_trace, call, Opts}, _From, State = #{trace := none}) ->
+    DefaultOpts = #{modules => [], pids => all},
+    {reply, ok, start_trace(State, maps:merge(DefaultOpts, Opts))};
+handle_call({stop_trace, call}, _From, State = #{trace := #{}}) ->
     {reply, ok, stop_trace(State)};
 handle_call(clean, _From, State = #{tab := Tab}) ->
     ets:delete_all_objects(Tab),
@@ -360,25 +359,25 @@ handle_call({set_tab, NewTab}, _From, State) ->
     create_tab(NewTab),
     {reply, ok, State#{tab := NewTab, index := index(NewTab)}};
 handle_call(Req, From, State) ->
-    error_logger:error_msg("Unexpected call ~p from ~p.", [Req, From]),
+    logger:error("Unexpected call ~p from ~p.", [Req, From]),
     {reply, ok, State}.
 
 -spec handle_cast(any(), map()) -> {noreply, map()}.
 handle_cast(Msg, State) ->
-    error_logger:error_msg("Unexpected message ~p.", [Msg]),
+    logger:error("Unexpected message ~p.", [Msg]),
     {noreply, State}.
 
 -spec handle_info(any(), map()) -> {noreply, map()}.
 
-handle_info(Trace, State = #{traced_modules := []}) when ?is_trace(Trace) ->
+handle_info(Trace, State = #{trace := none}) when ?is_trace(Trace) ->
     {noreply, State};
 handle_info(Trace, State = #{index := I, limit := Limit}) when ?is_trace(Trace), I >= Limit ->
-    error_logger:warning_msg("Reached trace limit ~p, stopping the tracer.", [Limit]),
+    logger:warning("Reached trace limit ~p, stopping the tracer.", [Limit]),
     {noreply, stop_trace(State)};
 handle_info(Trace, State) when ?is_trace(Trace) ->
     {noreply, handle_trace(Trace, State)};
 handle_info(Msg, State) ->
-    error_logger:error_msg("Unexpected message ~p.", [Msg]),
+    logger:error("Unexpected message ~p.", [Msg]),
     {noreply, State}.
 
 -spec terminate(any(), map()) -> ok.
@@ -422,24 +421,30 @@ index(Tab) ->
         _ -> initial_index()
     end.
 
-start_trace(State, ModSpecs) ->
+start_trace(State, Opts = #{modules := ModSpecs, pids := Pids}) ->
     [enable_trace_pattern(ModSpec) || ModSpec <- ModSpecs],
-    erlang:trace(all, true, [call, timestamp]),
-    State#{traced_modules := ModSpecs}.
+    trace_pids(Pids, true, [call, timestamp]),
+    State#{trace := Opts}.
 
-start_trace(State, ModSpecs, Pids) ->
-    [enable_trace_pattern(ModSpec) || ModSpec <- ModSpecs],
-    [erlang:trace(Pid, true, [call, timestamp]) || Pid <- Pids],
-    State#{traced_modules := ModSpecs, traced_pids := Pids}.
+stop_trace(State = #{trace := #{modules := ModSpecs, pids := Pids}}) ->
+    trace_pids(Pids, false, [call, timestamp]),
+    [disable_trace_pattern(ModSpec) || ModSpec <- ModSpecs],
+    State#{trace := none}.
 
-stop_trace(State = #{traced_modules := ModSpecs, traced_pids := []}) ->
-    erlang:trace(all, false, [call, timestamp]),
-    [disable_trace_pattern(ModSpec) || ModSpec <- ModSpecs],
-    State#{traced_modules := []};
-stop_trace(State = #{traced_modules := ModSpecs, traced_pids := Pids}) ->
-    [erlang:trace(Pid, false, [call, timestamp]) || Pid <- Pids],
-    [disable_trace_pattern(ModSpec) || ModSpec <- ModSpecs],
-    State#{traced_modules := [], traced_pids := []}.
+trace_pids(all, How, FlagList) ->
+    erlang:trace(all, How, FlagList),
+    ok;
+trace_pids(Pids, How, FlagList) when is_list(Pids) ->
+    [trace_pid(Pid, How, FlagList) || Pid <- Pids],
+    ok.
+
+trace_pid(Pid, How, FlagList) when is_pid(Pid) ->
+    try
+        erlang:trace(Pid, How, FlagList)
+    catch Class:Reason ->
+            logger:warning("Could not switch tracing to ~p for pid ~p, ~p:~p",
+                           [How, Pid, Class, Reason])
+    end.
 
 enable_trace_pattern(ModSpec) ->
     {MFA = {M, _, _}, Opts} = trace_pattern_and_opts(ModSpec),
@@ -471,7 +476,7 @@ handle_trace({trace_ts, Pid, exception_from, MFArity, {Class, Value}, TS}, #{tab
                         ts = usec_from_now(TS)}),
     State#{index := NextIndex};
 handle_trace(Trace, State) ->
-    error_logger:error_msg("Unexpected trace message ~p.", [Trace]),
+    logger:error("Unexpected trace message ~p.", [Trace]),
     State.
 
 %% Filter tracebacks
@@ -500,7 +505,7 @@ update_call_stack(#tr{event = Event, mfa = MFArity}, [#tr{mfa = MFArity} | Stack
   when ?is_return(Event) ->
     Stack;
 update_call_stack(#tr{event = Event, mfa = {M, F, Arity}}, Stack) when ?is_return(Event) ->
-    error_logger:warning_msg("Found a return trace from ~p:~p/~p without a call trace", [M, F, Arity]),
+    logger:warning("Found a return trace from ~p:~p/~p without a call trace", [M, F, Arity]),
     Stack.
 
 -spec add_tb([tr()], tb_acc(), tb_output(), tb_format()) -> tb_acc().
@@ -595,7 +600,7 @@ get_key_and_update_stack(_KeyF, [Key | Rest], #tr{event = Event}) when ?is_retur
     {Rest, Key};
 get_key_and_update_stack(_, [], #tr{event = Event, mfa = MFA}) when ?is_return(Event) ->
     {M, F, A} = mfarity(MFA),
-    error_logger:warning_msg("Found a return trace from ~p:~p/~p without a call trace", [M, F, A]),
+    logger:warning("Found a return trace from ~p:~p/~p without a call trace", [M, F, A]),
     {[], no_key}.
 
 tmp_key(#tr{}, no_key) -> no_key;
