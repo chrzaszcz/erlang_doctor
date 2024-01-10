@@ -9,7 +9,8 @@
 %% CT callbacks
 
 all() ->
-    [{group, tracebacks},
+    [{group, trace},
+     {group, tracebacks},
      {group, call_stat},
      {group, utils},
      {group, call_tree_stat}].
@@ -18,7 +19,8 @@ suite() ->
     [{timetrap, {seconds, 30}}].
 
 groups() ->
-    [{tracebacks, [single_tb,
+    [{trace, [single_pid]},
+     {tracebacks, [single_tb,
                    tb,
                    tb_bottom_up,
                    tb_limit,
@@ -28,7 +30,6 @@ groups() ->
                    tb_tree,
                    tb_tree_longest]},
      {call_stat, [simple_total,
-                  single_pid,
                   acc_and_own_for_recursion,
                   acc_and_own_for_recursion_with_exception,
                   acc_and_own_for_indirect_recursion,
@@ -51,9 +52,28 @@ init_per_testcase(_TC, Config) ->
     Config.
 
 end_per_testcase(_TC, _Config) ->
+    catch tr:stop_tracing(), % cleanup in case of failed tests
     tr:clean().
 
 %% Test cases
+
+single_pid(_Config) ->
+    Pid = spawn_link(fun ?MODULE:async_factorial/0),
+    tr:trace([{?MODULE, factorial, 1}], [Pid]),
+
+    %% call factorial in a different pid
+    ?MODULE:factorial(0),
+
+    %% call factorial in the traced pid
+    Pid ! {do_factorial, 0, self()},
+    receive {ok, _} -> ok end,
+    wait_for_traces(2),
+    tr:stop_tracing(),
+
+    %% expect only results from the traced pid
+    MFA = {?MODULE, factorial, 1},
+    [#tr{index = 1, event = call, mfa = MFA, pid = Pid, data = [0]},
+     #tr{index = 2, event = return, mfa = MFA, pid = Pid, data = 1}] = tr:select().
 
 do(_Config) ->
     tr:trace([{?MODULE, fib, 1}]),
@@ -206,36 +226,6 @@ simple_total(_Config) ->
     ?MODULE:factorial(1),
     timer:sleep(10),
     [{total, 5, Acc2, Acc2}] = tr:sorted_call_stat(fun(_) -> total end),
-    tr:stop_tracing().
-
-single_pid(_Config) ->
-    Pid = spawn_link(fun ?MODULE:async_factorial/0),
-    tr:trace([{?MODULE, factorial, 1}], [Pid]),
-    %% call factorial within the pid and outside of it
-    ?MODULE:factorial(2),
-    Pid ! {do_factorial, 2, self()},
-    receive {ok, _} -> ok end,
-    wait_for_traces(6),
-    [{total, 3, Acc1, Acc1}] = tr:sorted_call_stat(fun(_) -> total end),
-    ?MODULE:factorial(1),
-    Pid ! {do_factorial, 1, self()},
-    receive {ok, _} -> ok end,
-    [{total, 5, Acc2, Acc2}] = tr:sorted_call_stat(fun(_) -> total end),
-    ?assertEqual(true, Acc1 < Acc2),
-    tr:stop_tracing(),
-    wait_for_traces(10),
-
-    %% Tracing disabled
-    Pid ! {do_factorial, 1, self()},
-    receive {ok, _} -> ok end,
-    [{total, 5, Acc2, Acc2}] = tr:sorted_call_stat(fun(_) -> total end),
-
-    %% Tracing enabled for a different function
-    tr:trace([{?MODULE, factorial2, 1}]),
-    Pid ! {do_factorial, 1, self()},
-    receive {ok, _} -> ok end,
-    [{total, 5, Acc2, Acc2}] = tr:sorted_call_stat(fun(_) -> total end),
-    Pid ! stop,
     tr:stop_tracing().
 
 acc_and_own_for_recursion(_Config) ->
