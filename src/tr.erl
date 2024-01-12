@@ -708,10 +708,10 @@ set_ts_and_depth(Depths, _, no_key, none) ->
     Depths;
 set_ts_and_depth(Depths, #tr{event = call, ts = TS}, Key, none) ->
     Depths#{Key => {TS, 0}};
-set_ts_and_depth(Depths, #tr{event = call}, Key, {OrigTS, N}) ->
-    Depths#{Key => {OrigTS, N+1}};
-set_ts_and_depth(Depths, #tr{event = Event}, Key, {OrigTS, N}) when ?is_return(Event), N > 0 ->
-    Depths#{Key => {OrigTS, N-1}};
+set_ts_and_depth(Depths, #tr{event = call}, Key, {OrigTS, Depth}) ->
+    Depths#{Key => {OrigTS, Depth + 1}};
+set_ts_and_depth(Depths, #tr{event = Event}, Key, {OrigTS, Depth}) when ?is_return(Event), Depth > 0 ->
+    Depths#{Key => {OrigTS, Depth - 1}};
 set_ts_and_depth(Depths, #tr{event = Event}, Key, {_OrigTS, 0}) when ?is_return(Event) ->
     maps:remove(Key, Depths).
 
@@ -739,7 +739,7 @@ update_acc_time(TSDepth, Tr, Key, Stat) ->
             Stat;
         KeyToUpdate ->
             {Count, AccTime, OwnTime} = maps:get(KeyToUpdate, Stat, {0, 0, 0}),
-            {OrigTS, _N} = TSDepth,
+            {OrigTS, _Depth} = TSDepth,
             NewAccTime = AccTime + Tr#tr.ts - OrigTS,
             Stat#{KeyToUpdate => {Count, NewAccTime, OwnTime}}
     end.
