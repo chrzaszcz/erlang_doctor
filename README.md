@@ -58,7 +58,7 @@ In this example we start the `tr` module in the simplest way:
 {ok, <0.218.0>}
 ```
 
-### Tracing function calls: `trace`
+### Tracing: `trace`
 
 To function calls for given modules, use `tr:trace/1`, providing a list of traced modules:
 
@@ -71,6 +71,15 @@ You can provide `{Module, Function, Arity}` tuples in the list as well.
 To get a list of all modules from an application, use `tr:app_modules/1`.
 `tr:trace(tr:app_modules(your_app))` would trace all modules from `your_app`.
 There is a shortcut as well: `tr:trace_app(your_app)`.
+If you want to trace selected processes instead of all of them, you can use
+`tr:trace(Modules, Pids)`, which is a shortcut for `tr:trace(#{modules => Modules, pids => Pids})`.
+In fact, `tr:trace(Modules)` is a shortcut for `tr:trace(#{modules => Modules})`,
+and the `trace/1` function accepts a map of options with the following keys:
+
+- `modules`: a list of module names or `{Module, Function, Arity}` tuples. The list is empty by default.
+- `pids`: a list of Pids of processes to trace, or the atom `all` (default) to trace all processes.
+- `msg`: `none` (default), `all`, `send` or `recv`. Specifies which message events will be traced. By default no messages are traced.
+- `msg_trigger`: `after_traced_call` (default) or `always`. By default, traced messages in each process are stored after the first traced function call in that process. The goal is to limit the number of traced messages, which can be huge in the entire Erlang system. If you want all messages, set it to `always`.
 
 Now we can call some functions - let's trace the following function call.
 It calculates the factorial recursively and sleeps 1 ms between each step.
@@ -80,7 +89,7 @@ It calculates the factorial recursively and sleeps 1 ms between each step.
 6
 ```
 
-### Stop tracing calls
+### Stop tracing
 
 Stop tracing with the following function:
 
@@ -102,18 +111,21 @@ tr:trace(Modules), timer:sleep(1000), tr:stop_tracing().
 The collected traces are stored in an ETS table (default name: `trace`).
 They are stored as `#tr` records with the following fields:
 
-- `index`: trace identifier, auto-incremented for each received trace
-- `pid`: process ID associated with the trace
-- `event`: `call`, `return` or `exception`
-- `mfa`: an MFA tuple: module name, function name and function arity
-- `data`: argument list (for calls), returned value (for returns) or class and value (for exceptions)
-- `timestamp` in microseconds
+- `index`: trace identifier, auto-incremented for each received trace.
+- `pid`: process ID associated with the trace.
+- `event`: `call`, `return` or `exception` for function traces; `send` or `recv` for messages.
+- `mfa`: an MFA tuple: module name, function name and function arity; undefined for messages.
+- `data`: argument list (for calls), returned value (for returns) or class and value (for exceptions).
+- `timestamp` in microseconds.
+- `extra`: only for `send` events; `#msg` record with the following fields:
+    - `to`: message recipient (Pid),
+    - `exists`: boolean, indicates if the recipient process existed.
 
-It's useful to read the definition of this record before trace analysis:
+It's useful to read the record definitions before trace analysis:
 
 ```erlang
 6> rr(tr).
-[tr]
+[msg,node,tr]
 ```
 
 The snippet shown at the top of this README includes this already.
@@ -293,7 +305,7 @@ There are also functions: `traceback/1` and `traceback/2`. They set `limit` to o
 
 ### Trace ranges for filtered traces: `ranges`
 
-To get the whole traces between the matching call and the corresponding return, use `tr:ranges/1`:
+To get a list of traces between each matching call and the corresponding return, use `tr:ranges/1`:
 
 ```erlang
 14> tr:ranges(fun(#tr{data=[1]}) -> true end).
@@ -316,8 +328,8 @@ To get the whole traces between the matching call and the corresponding return, 
 There is also `tr:ranges/2` - it accepts a map of options with the following keys:
 
 - `tab` is the table or list which is like the second argument of `tr:filter/2`,
-- `max_depth` is the maximum depth of nested calls. You can use `#{max_depth => 1}`
-   to see only the top-level call and the corresponding return.
+- `max_depth` is the maximum depth of nested calls. A message event also adds 1 to the depth.
+    You can use `#{max_depth => 1}` to see only the top-level call and the corresponding return.
 
 There are two additional function: `tr:range/1` and `tr:range/2`, which return only one range if it exists. It is possible to pass a `tr` record or an index to `tr:range/1` as well.
 
