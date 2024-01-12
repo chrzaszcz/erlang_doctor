@@ -10,26 +10,36 @@
 
 all() ->
     [{group, trace},
-     {group, tracebacks},
+     {group, range},
+     {group, traceback},
+     {group, util},
      {group, call_stat},
-     {group, utils},
      {group, call_tree_stat}].
 
 suite() ->
     [{timetrap, {seconds, 30}}].
 
 groups() ->
-    [{trace, [single_pid]},
-     {tracebacks, [single_tb,
-                   tb,
-                   tb_bottom_up,
-                   tb_limit,
-                   tb_longest,
-                   tb_all,
-                   tb_all_limit,
-                   tb_tree,
-                   tb_tree_longest]},
+    [{trace, [single_pid,
+              single_pid_with_msg,
+              msg_after_traced_call]},
+     {range, [ranges,
+              ranges_max_depth,
+              range,
+              ranges_with_messages]},
+     {traceback, [single_tb,
+                  single_tb_with_messages,
+                  tb,
+                  tb_bottom_up,
+                  tb_limit,
+                  tb_longest,
+                  tb_all,
+                  tb_all_limit,
+                  tb_tree,
+                  tb_tree_longest]},
+     {util, [do]},
      {call_stat, [simple_total,
+                  simple_total_with_messages,
                   acc_and_own_for_recursion,
                   acc_and_own_for_recursion_with_exception,
                   acc_and_own_for_indirect_recursion,
@@ -37,8 +47,8 @@ groups() ->
                   interleave,
                   call_without_return,
                   return_without_call]},
-     {utils, [do]},
-     {call_tree_stat, [top_call_trees]}].
+     {call_tree_stat, [top_call_trees,
+                       top_call_trees_with_messages]}].
 
 init_per_suite(Config) ->
     ok = application:start(erlang_doctor),
@@ -59,21 +69,108 @@ end_per_testcase(_TC, _Config) ->
 
 single_pid(_Config) ->
     Pid = spawn_link(fun ?MODULE:async_factorial/0),
-    tr:trace([{?MODULE, factorial, 1}], [Pid]),
-
-    %% call factorial in a different pid
-    ?MODULE:factorial(0),
-
-    %% call factorial in the traced pid
+    MFA = {?MODULE, factorial, 1},
+    tr:trace([MFA], [Pid]),
+    factorial(0),
     Pid ! {do_factorial, 0, self()},
     receive {ok, _} -> ok end,
     wait_for_traces(2),
     tr:stop_tracing(),
+    Pid ! stop,
 
-    %% expect only results from the traced pid
-    MFA = {?MODULE, factorial, 1},
+    %% expect only traces from Pid
     [#tr{index = 1, event = call, mfa = MFA, pid = Pid, data = [0]},
      #tr{index = 2, event = return, mfa = MFA, pid = Pid, data = 1}] = tr:select().
+
+single_pid_with_msg(_Config) ->
+    Pid = spawn_link(fun ?MODULE:async_factorial/0),
+    MFA = {?MODULE, factorial, 1},
+    tr:trace(#{modules => [MFA], pids => [Pid], msg => all, msg_trigger => always}),
+    factorial(0),
+    Self = self(),
+    Pid ! {do_factorial, 0, Self},
+    receive {ok, _} -> ok end,
+    wait_for_traces(4),
+    tr:stop_tracing(),
+    Pid ! stop,
+
+    %% expect only traces from Pid
+    [#tr{index = 1, event = recv, pid = Pid, data = {do_factorial, 0, Self}},
+     #tr{index = 2, event = call, mfa = MFA, pid = Pid, data = [0]},
+     #tr{index = 3, event = return, mfa = MFA, pid = Pid, data = 1},
+     #tr{index = 4, event = send, pid = Pid, data = {ok, 1},
+         extra = #msg{to = Self, exists = true}}] = tr:select().
+
+msg_after_traced_call(_Config) ->
+    Pid = spawn_link(fun ?MODULE:async_factorial/0),
+    MFA = {?MODULE, factorial, 1},
+    tr:trace(#{modules => [MFA], msg => all}),
+    Self = self(),
+    Pid ! {do_factorial, 0, Self},
+    receive {ok, _} -> ok end,
+    Pid ! stop,
+    wait_for_traces(4),
+    tr:stop_tracing(),
+
+    %% message traces for Pid are stored after the call to factorial/1
+    [#tr{index = 1, event = call, mfa = MFA, pid = Pid, data = [0]},
+     #tr{index = 2, event = return, mfa = MFA, pid = Pid, data = 1},
+     #tr{index = 3, event = send, pid = Pid, data = {ok, 1},
+         extra = #msg{to = Self, exists = true}},
+     #tr{index = 4, event = recv, pid = Pid, data = stop}] = tr:select().
+
+ranges(_Config) ->
+    Traces = trace_fib3(),
+
+    %% all traces from fib(3)
+    [Traces] = tr:ranges(fun(#tr{event = call}) -> true end),
+
+    %% nothing because 'return' is not a call
+    [] = tr:ranges(fun(#tr{event = return}) -> true end),
+
+    %% all traces from both calls to fib(2)
+    Range1a = lists:sublist(Traces, 3, 2),
+    Range1b = lists:sublist(Traces, 8, 2),
+    [Range1a, Range1b] = tr:ranges(fun(#tr{data = [1]}) -> true end).
+
+ranges_max_depth(_Config) ->
+    Traces = trace_fib3(),
+
+    %% fib(3) and its return
+    Range1 = [hd(Traces), lists:last(Traces)],
+    [Range1] = tr:ranges(fun(#tr{event = call}) -> true end, #{max_depth => 1}),
+
+    %% fib(3) with fib(2) and fib(1) inside
+    Range2 = lists:sublist(Traces, 2) ++ lists:sublist(Traces, 7, 4),
+    [Range2] = tr:ranges(fun(#tr{event = call}) -> true end, #{max_depth => 2}).
+
+range(_Config) ->
+    Traces = trace_fib3(),
+
+    %% all traces from fib(3)
+    Traces = tr:range(fun(#tr{event = call}) -> true end),
+    Traces = tr:range(1),
+    Traces = tr:range(hd(Traces)),
+
+    %% return is not a call
+    ?assertException(error, badarg, tr:range(fun(#tr{event = return}) -> true end)),
+
+    %% all traces from the first call to fib(2)
+    Range1 = lists:sublist(Traces, 3, 2),
+    Range1 = tr:range(fun(#tr{data = [1]}) -> true end).
+
+ranges_with_messages(_Config) ->
+    Traces = trace_wait_and_reply(),
+
+    %% all traces from the root call with messages
+    [Traces] = tr:ranges(fun(#tr{}) -> true end),
+
+    %% nothing because 'send' is not a call
+    [] = tr:ranges(fun(#tr{event = send}) -> true end),
+
+    %% root call and its return without messages (they have depth of 2)
+    Range1 = [hd(Traces), lists:last(Traces)],
+    [Range1] = tr:ranges(fun(#tr{}) -> true end, #{max_depth => 1}).
 
 do(_Config) ->
     tr:trace([{?MODULE, fib, 1}]),
@@ -100,6 +197,13 @@ single_tb(_Config) ->
     TB = tr:traceback(fun(#tr{event = return, data = N}) when N < 2 -> true end),
     ct:pal("~p~n", [TB]),
     ?assertMatch([#tr{data = [1]}, #tr{data = [2]}, #tr{data = [3]}, #tr{data = [4]}], TB).
+
+single_tb_with_messages(_Config) ->
+    Traces = [Call, Send, Recv|_] = trace_wait_and_reply(),
+    Return = lists:last(Traces),
+    ?assertEqual([Call], tr:traceback(Send)),
+    ?assertEqual([Call], tr:traceback(Recv)),
+    ?assertEqual([Call], tr:traceback(Return)).
 
 tb(_Config) ->
     tr:trace([{?MODULE, fib, 1}]),
@@ -227,6 +331,10 @@ simple_total(_Config) ->
     timer:sleep(10),
     [{total, 5, Acc2, Acc2}] = tr:sorted_call_stat(fun(_) -> total end),
     tr:stop_tracing().
+
+simple_total_with_messages(_Config) ->
+    _Traces = trace_wait_and_reply(),
+    [{total, 1, Acc1, Acc1}] = tr:sorted_call_stat(fun(_) -> total end).
 
 acc_and_own_for_recursion(_Config) ->
     tr:trace([{?MODULE, sleepy_factorial, 1}]),
@@ -371,7 +479,47 @@ top_call_trees(_Config) ->
     ?assert(T2 + T3 > T1),
     ?assert(T2 > T0).
 
+top_call_trees_with_messages(_Config) ->
+    _Traces = trace_wait_and_reply(),
+    [{_T, 1, #node{module = ?MODULE, function = wait_and_reply,
+                   args = [_], result = {return, {finished, _}}}}] =
+         tr:top_call_trees(#{min_count => 1}).
+
 %% Helpers
+
+trace_fib3() ->
+    tr:trace([MFA = {?MODULE, fib, 1}]),
+    fib(3),
+    wait_for_traces(10),
+    tr:stop_tracing(),
+    [#tr{index = 1, event = call, mfa = MFA, data = [3]},
+     #tr{index = 2, event = call, mfa = MFA, data = [2]},
+     #tr{index = 3, event = call, mfa = MFA, data = [1]},
+     #tr{index = 4, event = return, mfa = MFA, data = 1},
+     #tr{index = 5, event = call, mfa = MFA, data = [0]},
+     #tr{index = 6, event = return, mfa = MFA, data = 0},
+     #tr{index = 7, event = return, mfa = MFA, data = 1},
+     #tr{index = 8, event = call, mfa = MFA, data = [1]},
+     #tr{index = 9, event = return, mfa = MFA, data = 1},
+     #tr{index = 10, event = return, mfa = MFA, data = 2}] = tr:select().
+
+trace_wait_and_reply() ->
+    Self = self(),
+    tr:trace(#{modules => [MFA = {?MODULE, wait_and_reply, 1}], msg => all}),
+    Pid = spawn_link(?MODULE, wait_and_reply, [self()]),
+    receive {started, Pid} -> ok end,
+    Pid ! reply,
+    receive {finished, Pid} -> ok end,
+    wait_for_traces(5),
+    tr:stop_tracing(),
+    [#tr{index = 1, pid = Pid, event = call, mfa = MFA, data = [Self]},
+     #tr{index = 2, pid = Pid, event = send, data = {started, Pid},
+         extra = #msg{to = Self, exists = true}},
+     #tr{index = 3, pid = Pid, event = recv, data = reply},
+     #tr{index = 4, pid = Pid, event = send, data = {finished, Pid},
+         extra = #msg{to = Self, exists = true}},
+     #tr{index = 5, pid = Pid, event = return, mfa = MFA, data = {finished, Pid}}
+    ] = tr:select().
 
 factorial(N) when N > 0 -> N * factorial(N - 1);
 factorial(0) -> 1.

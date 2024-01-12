@@ -48,15 +48,19 @@
          terminate/2,
          code_change/3]).
 
+-record(msg, {to :: pid(), exists :: boolean()}).
+
 %% copied, not included from tr.hrl to make it self-contained
--record(tr, {index :: pos_integer(),
+-record(tr, {index :: index(),
              pid :: pid(),
-             event :: call | return | exception,
-             mfa :: mfa(),
+             event :: call | return | exception | send | recv,
+             mfa :: mfa() | undefined,
              data :: term(),
-             ts :: integer()}).
+             ts :: integer(),
+             extra :: #msg{} | undefined}).
 
 -define(is_return(Event), (Event =:= return orelse Event =:= exception)).
+-define(is_msg(Event), (Event =:= send orelse Event =:= recv)).
 
 -type tr() :: #tr{}.
 -type pred() :: fun((tr()) -> boolean()).
@@ -66,7 +70,7 @@
 -type own_time() :: non_neg_integer().
 -type pids() :: [pid()] | all.
 -type limit() :: pos_integer() | infinity. % used for a few different limits
--type index() :: non_neg_integer().
+-type index() :: pos_integer().
 
 -type init_options() :: #{tab => atom(),
                           index => index(),
@@ -74,10 +78,19 @@
 -type state() :: #{tab := atom(),
                    index := index(),
                    limit := limit(),
-                   trace := none | trace_spec()}.
+                   trace := none | trace_spec(),
+                   traced_pids := traced_pids_tab()}.
 -type trace_spec() :: #{modules := module_spec(),
-                        pids := pids()}.
+                        pids := pids(),
+                        msg := send | recv | all | none,
+                        msg_trigger := always | after_traced_call}.
+-type trace_options() :: #{modules => module_spec(),
+                           pids => pids(),
+                           msg => send | recv | all | none,
+                           msg_trigger => always | after_traced_call}.
 -type module_spec() :: [module() | mfa()].
+-type erlang_trace_flags() :: [call | timestamp | send | 'receive'].
+-type traced_pids_tab() :: none | ets:table().
 
 -type range_options() :: #{tab => atom() | [tr()],
                            max_depth => limit()}.
@@ -124,6 +137,8 @@
 
 -type tree_item() :: {time_diff(), count(), tree()}.
 
+-export_type([tr/0, index/0]).
+
 %% API - capturing, data manipulation
 
 -spec start_link() -> {ok, pid()}.
@@ -152,14 +167,17 @@ trace_app(App) ->
 trace_apps(Apps) ->
     trace(lists:flatmap(fun app_modules/1, Apps)).
 
--spec trace(module_spec()) -> ok.
-trace(Modules) ->
-    gen_server:call(?MODULE, {start_trace, call, #{modules => Modules}}).
+-spec trace(module_spec() | trace_options()) -> ok.
+trace(Modules) when is_list(Modules) ->
+    trace(#{modules => Modules});
+trace(Opts) ->
+    DefaultOpts = #{modules => [], pids => all,
+                    msg => none, msg_trigger => after_traced_call},
+    gen_server:call(?MODULE, {start_trace, call, maps:merge(DefaultOpts, Opts)}).
 
 -spec trace(module_spec(), pids()) -> ok.
 trace(Modules, Pids) ->
-    gen_server:call(?MODULE, {start_trace, call, #{modules => Modules,
-                                                   pids => Pids}}).
+    trace(#{modules => Modules, pids => Pids}).
 
 -spec stop_tracing() -> ok.
 stop_tracing() ->
@@ -214,7 +232,7 @@ filter(F, Tab) ->
     Traces = foldl(fun(Tr, State) -> filter_trace(F, Tr, State) end, [], Tab),
     lists:reverse(Traces).
 
--spec traceback(pred() | tr() | pos_integer()) -> [tr()].
+-spec traceback(pred() | tr() | index()) -> [tr()].
 traceback(Index) when is_integer(Index) ->
     traceback(fun(#tr{index = I}) -> Index =:= I end);
 traceback(T = #tr{}) ->
@@ -245,7 +263,7 @@ tracebacks(PredF, Options) when is_map(Options) ->
         foldl(fun(T, State) -> tb_step(PredF, T, State) end, InitialState, Tab),
     finalize_tracebacks(TBs, Output, Format, Options).
 
--spec range(pred() | tr() | pos_integer()) -> [tr()].
+-spec range(pred() | tr() | index()) -> [tr()].
 range(Index) when is_integer(Index) ->
     range(fun(#tr{index = I}) -> Index =:= I end);
 range(T = #tr{}) ->
@@ -304,7 +322,7 @@ do(Index) when is_integer(Index) ->
 do(#tr{event = call, mfa = {M, F, Arity}, data = Args}) when length(Args) =:= Arity ->
     apply(M, F, Args).
 
--spec lookup(pos_integer()) -> tr().
+-spec lookup(index()) -> tr().
 lookup(Index) when is_integer(Index) ->
     [T] = ets:lookup(tab(), Index),
     T.
@@ -338,15 +356,15 @@ init(Opts) ->
     DefaultState = #{tab => default_tab(),
                      index => initial_index(),
                      limit => infinity,
-                     trace => none},
+                     trace => none,
+                     traced_pids => none},
     State = #{tab := Tab} = maps:merge(DefaultState, Opts),
     create_tab(Tab),
     {ok, maps:merge(State, Opts)}.
 
 -spec handle_call(any(), {pid(), any()}, state()) -> {reply, ok, state()}.
-handle_call({start_trace, call, Opts}, _From, State = #{trace := none}) ->
-    DefaultOpts = #{modules => [], pids => all},
-    {reply, ok, start_trace(State, maps:merge(DefaultOpts, Opts))};
+handle_call({start_trace, call, Spec}, _From, State = #{trace := none}) ->
+    {reply, ok, start_trace(State, Spec)};
 handle_call({stop_trace, call}, _From, State = #{trace := #{}}) ->
     {reply, ok, stop_trace(State)};
 handle_call(clean, _From, State = #{tab := Tab}) ->
@@ -425,26 +443,42 @@ contains_val(_, _) -> false.
 
 index(Tab) ->
     case ets:last(Tab) of
-        I when is_integer(I) -> I;
+        I when is_integer(I) -> I + 1;
         _ -> initial_index()
     end.
 
 -spec start_trace(state(), trace_spec()) -> state().
 start_trace(State, Spec = #{modules := ModSpecs, pids := Pids}) ->
+    TracedPidsTab = setup_msg_tracing(Spec),
     [enable_trace_pattern(ModSpec) || ModSpec <- ModSpecs],
-    trace_pids(Pids, true, [call, timestamp]),
-    State#{trace := Spec}.
+    set_tracing(Pids, true, trace_flags(Spec)),
+    State#{trace := Spec, traced_pids := TracedPidsTab}.
 
 -spec stop_trace(state()) -> state().
-stop_trace(State = #{trace := #{modules := ModSpecs, pids := Pids}}) ->
-    trace_pids(Pids, false, [call, timestamp]),
+stop_trace(State = #{trace := Spec = #{modules := ModSpecs, pids := Pids},
+                     traced_pids := TracedPidsTab}) ->
+    set_tracing(Pids, false, trace_flags(Spec)),
     [disable_trace_pattern(ModSpec) || ModSpec <- ModSpecs],
-    State#{trace := none}.
+    teardown_msg_tracing(Spec, TracedPidsTab),
+    State#{trace := none, traced_pids := none}.
 
-trace_pids(all, How, FlagList) ->
+-spec trace_flags(trace_spec()) -> erlang_trace_flags().
+trace_flags(Spec) ->
+    basic_trace_flags() ++ msg_trace_flags(Spec).
+
+-spec msg_trace_flags(trace_spec()) -> erlang_trace_flags().
+msg_trace_flags(#{msg := all}) -> [send, 'receive'];
+msg_trace_flags(#{msg := send}) -> [send];
+msg_trace_flags(#{msg := recv}) -> ['receive'];
+msg_trace_flags(#{msg := none}) -> [].
+
+basic_trace_flags() -> [call, timestamp].
+
+-spec set_tracing(pids(), boolean(), erlang_trace_flags()) -> ok.
+set_tracing(all, How, FlagList) ->
     erlang:trace(all, How, FlagList),
     ok;
-trace_pids(Pids, How, FlagList) when is_list(Pids) ->
+set_tracing(Pids, How, FlagList) when is_list(Pids) ->
     [trace_pid(Pid, How, FlagList) || Pid <- Pids],
     ok.
 
@@ -454,6 +488,24 @@ trace_pid(Pid, How, FlagList) when is_pid(Pid) ->
     catch Class:Reason ->
             logger:warning("Could not switch tracing to ~p for pid ~p, ~p:~p",
                            [How, Pid, Class, Reason])
+    end.
+
+-spec setup_msg_tracing(trace_spec()) -> traced_pids_tab().
+setup_msg_tracing(#{msg := none}) ->
+    none;
+setup_msg_tracing(#{msg := _, msg_trigger := Trigger}) ->
+    case Trigger of
+        after_traced_call -> ets:new(traced_pids, []);
+        always -> none
+    end.
+
+-spec teardown_msg_tracing(trace_spec(), traced_pids_tab()) -> any().
+teardown_msg_tracing(#{msg := none}, _) ->
+    ok;
+teardown_msg_tracing(#{msg := _}, TracedPidsTab) ->
+    case TracedPidsTab of
+        none -> ok;
+        _ -> ets:delete(TracedPidsTab)
     end.
 
 enable_trace_pattern(ModSpec) ->
@@ -471,23 +523,54 @@ trace_pattern_and_opts({Mod, Opts}) when is_atom(Mod) -> {{Mod, '_', '_'}, Opts}
 trace_pattern_and_opts({{_M, _F, _A} = MFA, Opts}) -> {MFA, Opts}.
 
 handle_trace({trace_ts, Pid, call, MFA = {_, _, Args}, TS}, #{tab := Tab, index := I} = State) ->
-    NextIndex = next_index(I),
-    ets:insert(Tab, #tr{index = NextIndex, pid = Pid, event = call, mfa = mfarity(MFA), data = Args,
+    case are_messages_skipped(Pid, State) of
+        true -> stop_skipping_messages(Pid, State);
+        false -> ok
+    end,
+    ets:insert(Tab, #tr{index = I, pid = Pid, event = call, mfa = mfarity(MFA), data = Args,
                         ts = usec_from_now(TS)}),
-    State#{index := NextIndex};
+    State#{index := I + 1};
 handle_trace({trace_ts, Pid, return_from, MFArity, Res, TS}, #{tab := Tab, index := I} = State) ->
-    NextIndex = next_index(I),
-    ets:insert(Tab, #tr{index = NextIndex, pid = Pid, event = return, mfa = MFArity, data = Res,
+    ets:insert(Tab, #tr{index = I, pid = Pid, event = return, mfa = MFArity, data = Res,
                         ts = usec_from_now(TS)}),
-    State#{index := NextIndex};
+    State#{index := I + 1};
 handle_trace({trace_ts, Pid, exception_from, MFArity, {Class, Value}, TS}, #{tab := Tab, index := I} = State) ->
-    NextIndex = next_index(I),
-    ets:insert(Tab, #tr{index = NextIndex, pid = Pid, event = exception, mfa = MFArity, data = {Class, Value},
+    ets:insert(Tab, #tr{index = I, pid = Pid, event = exception, mfa = MFArity, data = {Class, Value},
                         ts = usec_from_now(TS)}),
-    State#{index := NextIndex};
+    State#{index := I + 1};
+handle_trace({trace_ts, Pid, Event, Msg, To, TS}, State)
+  when Event =:= send orelse Event =:= send_to_non_existing_process ->
+    case are_messages_skipped(Pid, State) of
+        true -> State;
+        false -> handle_send_trace(Pid, Event, Msg, To, TS, State)
+    end;
+handle_trace({trace_ts, Pid, 'receive', Msg, TS}, State) ->
+    case are_messages_skipped(Pid, State) of
+        true -> State;
+        false -> handle_recv_trace(Pid, Msg, TS, State)
+    end;
 handle_trace(Trace, State) ->
     logger:error("Unexpected trace message ~p.", [Trace]),
     State.
+
+handle_send_trace(Pid, Event, Msg, To, TS, #{tab := Tab, index := I} = State) ->
+    Extra = #msg{to = To, exists = Event =:= send},
+    ets:insert(Tab, #tr{index = I, pid = Pid, event = send, data = Msg,
+                        ts = usec_from_now(TS), extra = Extra}),
+    State#{index := I + 1}.
+
+handle_recv_trace(Pid, Msg, TS, #{tab := Tab, index := I} = State) ->
+    ets:insert(Tab, #tr{index = I, pid = Pid, event = recv, data = Msg,
+                        ts = usec_from_now(TS)}),
+    State#{index := I + 1}.
+
+are_messages_skipped(_Pid, #{traced_pids := none}) ->
+    false;
+are_messages_skipped(Pid, #{traced_pids := TracedPidsTab}) ->
+    ets:lookup(TracedPidsTab, Pid) =:= [].
+
+stop_skipping_messages(Pid, #{traced_pids := TracedPidsTab}) ->
+    ets:insert(TracedPidsTab, {Pid}).
 
 %% Filter tracebacks
 
@@ -501,7 +584,7 @@ tb_step(PredF, T = #tr{pid = Pid, event = Event},
     case catch PredF(T) of
         true when Count < Limit ->
             TB = if Event =:= call -> NewStack;
-                    ?is_return(Event) -> CallStack
+                    ?is_return(Event) orelse ?is_msg(Event) -> CallStack
                  end,
             NewState#{tbs := add_tb(lists:reverse(TB), TBs, Output, Format),
                       count := Count + 1};
@@ -516,6 +599,8 @@ update_call_stack(#tr{event = Event, mfa = MFArity}, [#tr{mfa = MFArity} | Stack
     Stack;
 update_call_stack(#tr{event = Event, mfa = {M, F, Arity}}, Stack) when ?is_return(Event) ->
     logger:warning("Found a return trace from ~p:~p/~p without a call trace", [M, F, Arity]),
+    Stack;
+update_call_stack(#tr{event = Event}, Stack) when ?is_msg(Event) ->
     Stack.
 
 -spec add_tb([tr()], tb_acc(), tb_output(), tb_format()) -> tb_acc().
@@ -584,6 +669,11 @@ filter_range(_PredF, T = #tr{event = Event}, State = #{depth := Depth, trace := 
 filter_range(_PredF, #tr{event = Event}, State = #{depth := Depth, trace := Trace}, _) when ?is_return(Event) ->
     {incomplete, State#{depth => Depth - 1, trace => Trace}};
 filter_range(_PredF, #tr{event = Event}, no_state, _) when ?is_return(Event) ->
+    none;
+filter_range(_PrefF, T = #tr{event = Event}, State = #{depth := Depth, trace := Trace}, MaxDepth)
+  when Depth < MaxDepth, ?is_msg(Event) ->
+    {incomplete, State#{depth => Depth, trace => [T|Trace]}};
+filter_range(_PrefF, #tr{event = Event}, _State, _MaxDepth) when ?is_msg(Event) ->
     none.
 
 %% Call stat
@@ -591,6 +681,8 @@ filter_range(_PredF, #tr{event = Event}, no_state, _) when ?is_return(Event) ->
 sort_by_time(MapStat) ->
     lists:keysort(3, [{Key, Count, AccTime, OwnTime} || {Key, {Count, AccTime, OwnTime}} <- maps:to_list(MapStat)]).
 
+call_stat_step(_KeyF, #tr{event = Event}, State) when ?is_msg(Event) ->
+    State;
 call_stat_step(KeyF, Tr = #tr{pid = Pid}, {ProcessStates, TmpStat, Stat}) ->
     {LastTr, LastKey, Stack} = maps:get(Pid, ProcessStates, {no_tr, no_key, []}),
     {NewStack, Key} = get_key_and_update_stack(KeyF, Stack, Tr),
@@ -687,6 +779,8 @@ call_tree_stat(Options) when is_map(Options) ->
     CallTreeTab.
 
 -spec call_tree_stat_step(tr(), call_tree_stat_state()) -> call_tree_stat_state().
+call_tree_stat_step(#tr{event = Event}, State) when ?is_msg(Event) ->
+    State;
 call_tree_stat_step(Tr = #tr{pid = Pid, ts = TS}, State = #{pid_states := PidStates, tab := TreeTab}) ->
     PidState = maps:get(Pid, PidStates, []),
     Item = simplify_trace_item(Tr),
@@ -798,11 +892,7 @@ insert_top_call_trees_item(TreeItem, Set, MaxSize) ->
 
 -spec initial_index() -> index().
 initial_index() ->
-    0.
-
--spec next_index(index()) -> index().
-next_index(I) ->
-    I + 1.
+    1.
 
 default_tab() ->
     trace.
