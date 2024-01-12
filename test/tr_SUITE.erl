@@ -39,6 +39,7 @@ groups() ->
                   tb_tree_longest]},
      {util, [do]},
      {call_stat, [simple_total,
+                  tree_total,
                   simple_total_with_messages,
                   acc_and_own_for_recursion,
                   acc_and_own_for_recursion_with_exception,
@@ -331,6 +332,12 @@ simple_total(_Config) ->
     timer:sleep(10),
     [{total, 5, Acc2, Acc2}] = tr:sorted_call_stat(fun(_) -> total end),
     tr:stop_tracing().
+
+tree_total(_Config) ->
+    %% Check that acc and own times are equal for a branching call tree
+    trace_fib3(),
+    [{total, 5, Acc, Acc}] = tr:sorted_call_stat(fun(_) -> total end),
+    ?assert(Acc > 0).
 
 simple_total_with_messages(_Config) ->
     _Traces = trace_wait_and_reply(),
