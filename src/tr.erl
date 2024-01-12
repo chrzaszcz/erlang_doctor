@@ -300,7 +300,7 @@ call_stat(KeyF) ->
 
 -spec call_stat(selector(), atom() | [tr()]) -> #{term() => {call_count(), acc_time(), own_time()}}.
 call_stat(KeyF, Tab) ->
-    {#{}, #{}, State} = foldl(fun(Tr, State) -> call_stat_step(KeyF, Tr, State) end, {#{}, #{}, #{}}, Tab),
+    {#{}, State} = foldl(fun(Tr, State) -> call_stat_step(KeyF, Tr, State) end, {#{}, #{}}, Tab),
     State.
 
 %% API - utilities
@@ -683,15 +683,14 @@ sort_by_time(MapStat) ->
 
 call_stat_step(_KeyF, #tr{event = Event}, State) when ?is_msg(Event) ->
     State;
-call_stat_step(KeyF, Tr = #tr{pid = Pid}, {ProcessStates, TmpStat, Stat}) ->
-    {LastTr, Stack} = maps:get(Pid, ProcessStates, {no_tr, []}),
+call_stat_step(KeyF, Tr = #tr{pid = Pid}, {ProcessStates, Stat}) ->
+    {LastTr, Stack, Depths} = maps:get(Pid, ProcessStates, {no_tr, [], #{}}),
     {NewStack, Key} = get_key_and_update_stack(KeyF, Stack, Tr),
-    TmpKey = tmp_key(Tr, Key),
-    TmpValue = maps:get(TmpKey, TmpStat, none),
-    ProcessStates1 = ProcessStates#{Pid => {Tr, NewStack}},
-    TmpStat1 = update_tmp(TmpStat, Tr, TmpKey, TmpValue),
-    Stat1 = update_stat(Stat, LastTr, Tr, Key, TmpValue, Stack),
-    {ProcessStates1, TmpStat1, Stat1}.
+    TSDepth = maps:get(Key, Depths, none),
+    NewDepths = set_ts_and_depth(Depths, Tr, Key, TSDepth),
+    ProcessStates1 = ProcessStates#{Pid => {Tr, NewStack, NewDepths}},
+    Stat1 = update_stat(Stat, LastTr, Tr, Key, TSDepth, Stack),
+    {ProcessStates1, Stat1}.
 
 get_key_and_update_stack(KeyF, Stack, T = #tr{event = call}) ->
     Key = try KeyF(T)
@@ -705,23 +704,20 @@ get_key_and_update_stack(_, [], #tr{event = Event, mfa = MFA}) when ?is_return(E
     logger:warning("Found a return trace from ~p:~p/~p without a call trace", [M, F, A]),
     {[], no_key}.
 
-tmp_key(#tr{}, no_key) -> no_key;
-tmp_key(#tr{pid = Pid}, Key) -> {Pid, Key}.
+set_ts_and_depth(Depths, _, no_key, none) ->
+    Depths;
+set_ts_and_depth(Depths, #tr{event = call, ts = TS}, Key, none) ->
+    Depths#{Key => {TS, 0}};
+set_ts_and_depth(Depths, #tr{event = call}, Key, {OrigTS, N}) ->
+    Depths#{Key => {OrigTS, N+1}};
+set_ts_and_depth(Depths, #tr{event = Event}, Key, {OrigTS, N}) when ?is_return(Event), N > 0 ->
+    Depths#{Key => {OrigTS, N-1}};
+set_ts_and_depth(Depths, #tr{event = Event}, Key, {_OrigTS, 0}) when ?is_return(Event) ->
+    maps:remove(Key, Depths).
 
-update_tmp(TmpStat, _, no_key, none) ->
-    TmpStat;
-update_tmp(TmpStat, #tr{event = call, ts = TS}, Key, none) ->
-    TmpStat#{Key => {TS, 0}};
-update_tmp(TmpStat, #tr{event = call}, Key, {OrigTS, N}) ->
-    TmpStat#{Key => {OrigTS, N+1}};
-update_tmp(TmpStat, #tr{event = Event}, Key, {OrigTS, N}) when ?is_return(Event), N > 0 ->
-    TmpStat#{Key => {OrigTS, N-1}};
-update_tmp(TmpStat, #tr{event = Event}, Key, {_OrigTS, 0}) when ?is_return(Event) ->
-    maps:remove(Key, TmpStat).
-
-update_stat(Stat, LastTr, Tr, Key, TmpVal, Stack) ->
+update_stat(Stat, LastTr, Tr, Key, TSDepth, Stack) ->
     Stat1 = update_count(Tr, Key, Stat),
-    Stat2 = update_acc_time(TmpVal, Tr, Key, Stat1),
+    Stat2 = update_acc_time(TSDepth, Tr, Key, Stat1),
     ParentKey = case Stack of
                     [K | _] -> K;
                     [] -> no_key
@@ -737,13 +733,13 @@ update_count(Tr, Key, Stat) ->
             Stat#{KeyToUpdate => {Count + 1, AccTime, OwnTime}}
     end.
 
-update_acc_time(TmpVal, Tr, Key, Stat) ->
-    case acc_time_key(TmpVal, Tr, Key) of
+update_acc_time(TSDepth, Tr, Key, Stat) ->
+    case acc_time_key(TSDepth, Tr, Key) of
         no_key ->
             Stat;
         KeyToUpdate ->
             {Count, AccTime, OwnTime} = maps:get(KeyToUpdate, Stat, {0, 0, 0}),
-            {OrigTS, _N} = TmpVal,
+            {OrigTS, _N} = TSDepth,
             NewAccTime = AccTime + Tr#tr.ts - OrigTS,
             Stat#{KeyToUpdate => {Count, NewAccTime, OwnTime}}
     end.
