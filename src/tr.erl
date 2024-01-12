@@ -684,11 +684,11 @@ sort_by_time(MapStat) ->
 call_stat_step(_KeyF, #tr{event = Event}, State) when ?is_msg(Event) ->
     State;
 call_stat_step(KeyF, Tr = #tr{pid = Pid}, {ProcessStates, TmpStat, Stat}) ->
-    {LastTr, _LastKey, Stack} = maps:get(Pid, ProcessStates, {no_tr, no_key, []}),
+    {LastTr, Stack} = maps:get(Pid, ProcessStates, {no_tr, []}),
     {NewStack, Key} = get_key_and_update_stack(KeyF, Stack, Tr),
     TmpKey = tmp_key(Tr, Key),
     TmpValue = maps:get(TmpKey, TmpStat, none),
-    ProcessStates1 = ProcessStates#{Pid => {Tr, Key, NewStack}},
+    ProcessStates1 = ProcessStates#{Pid => {Tr, NewStack}},
     TmpStat1 = update_tmp(TmpStat, Tr, TmpKey, TmpValue),
     Stat1 = update_stat(Stat, LastTr, Tr, Key, TmpValue, Stack),
     {ProcessStates1, TmpStat1, Stat1}.
