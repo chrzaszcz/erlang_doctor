@@ -183,7 +183,7 @@ load(File) ->
 
 -spec dump(string()) -> ok | {error, any()}.
 dump(File) ->
-    gen_server:call(?MODULE, {dump, File}).
+    gen_server:call(?MODULE, {dump, File}, timer:minutes(2)).
 
 -spec clean() -> ok.
 clean() ->
