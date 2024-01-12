@@ -721,7 +721,7 @@ update_tmp(TmpStat, #tr{event = Event}, Key, {_OrigTS, 0}) when ?is_return(Event
 
 update_stat(Stat, LastTr, Tr, Key, TmpVal, Stack) ->
     Stat1 = update_count(Tr, Key, Stat),
-    Stat2 = update_acc_time(TmpVal, Tr, Key, TmpVal, Stat1),
+    Stat2 = update_acc_time(TmpVal, Tr, Key, Stat1),
     ParentKey = case Stack of
                     [K | _] -> K;
                     [] -> no_key
@@ -737,7 +737,7 @@ update_count(Tr, Key, Stat) ->
             Stat#{KeyToUpdate => {Count + 1, AccTime, OwnTime}}
     end.
 
-update_acc_time(TmpVal, Tr, Key, TmpVal, Stat) ->
+update_acc_time(TmpVal, Tr, Key, Stat) ->
     case acc_time_key(TmpVal, Tr, Key) of
         no_key ->
             Stat;
