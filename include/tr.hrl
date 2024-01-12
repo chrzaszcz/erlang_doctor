@@ -1,9 +1,12 @@
--record(tr, {index :: pos_integer(),
+-record(msg, {to :: pid(), exists :: boolean()}).
+
+-record(tr, {index :: tr:index(),
              pid :: pid(),
-             event :: call | return_from | exception_from,
-             mfa :: {module(), atom(), non_neg_integer()},
+             event :: call | return | exception | send | recv,
+             mfa :: mfa() | undefined,
              data :: term(),
-             ts :: integer()}).
+             ts :: integer(),
+             extra :: #msg{} | undefined}).
 
 -record(node, {module :: module(),
                function :: atom(),
