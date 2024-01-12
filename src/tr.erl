@@ -684,13 +684,13 @@ sort_by_time(MapStat) ->
 call_stat_step(_KeyF, #tr{event = Event}, State) when ?is_msg(Event) ->
     State;
 call_stat_step(KeyF, Tr = #tr{pid = Pid}, {ProcessStates, TmpStat, Stat}) ->
-    {LastTr, LastKey, Stack} = maps:get(Pid, ProcessStates, {no_tr, no_key, []}),
+    {LastTr, _LastKey, Stack} = maps:get(Pid, ProcessStates, {no_tr, no_key, []}),
     {NewStack, Key} = get_key_and_update_stack(KeyF, Stack, Tr),
     TmpKey = tmp_key(Tr, Key),
     TmpValue = maps:get(TmpKey, TmpStat, none),
     ProcessStates1 = ProcessStates#{Pid => {Tr, Key, NewStack}},
     TmpStat1 = update_tmp(TmpStat, Tr, TmpKey, TmpValue),
-    Stat1 = update_stat(Stat, LastTr, LastKey, Tr, Key, TmpValue),
+    Stat1 = update_stat(Stat, LastTr, Tr, Key, TmpValue, Stack),
     {ProcessStates1, TmpStat1, Stat1}.
 
 get_key_and_update_stack(KeyF, Stack, T = #tr{event = call}) ->
@@ -719,10 +719,14 @@ update_tmp(TmpStat, #tr{event = Event}, Key, {OrigTS, N}) when ?is_return(Event)
 update_tmp(TmpStat, #tr{event = Event}, Key, {_OrigTS, 0}) when ?is_return(Event) ->
     maps:remove(Key, TmpStat).
 
-update_stat(Stat, LastTr, LastKey, Tr, Key, TmpVal) ->
+update_stat(Stat, LastTr, Tr, Key, TmpVal, Stack) ->
     Stat1 = update_count(Tr, Key, Stat),
     Stat2 = update_acc_time(TmpVal, Tr, Key, TmpVal, Stat1),
-    update_own_time(LastTr, LastKey, Tr, Key, Stat2).
+    ParentKey = case Stack of
+                    [K | _] -> K;
+                    [] -> no_key
+                end,
+    update_own_time(LastTr, ParentKey, Tr, Key, Stat2).
 
 update_count(Tr, Key, Stat) ->
     case count_key(Tr, Key) of
@@ -744,8 +748,8 @@ update_acc_time(TmpVal, Tr, Key, TmpVal, Stat) ->
             Stat#{KeyToUpdate => {Count, NewAccTime, OwnTime}}
     end.
 
-update_own_time(LastTr, LastKey, Tr, Key, Stat) ->
-    case own_time_key(LastTr, LastKey, Tr, Key) of
+update_own_time(LastTr, ParentKey, Tr, Key, Stat) ->
+    case own_time_key(LastTr, ParentKey, Tr, Key) of
         no_key ->
             Stat;
         KeyToUpdate ->
@@ -754,14 +758,20 @@ update_own_time(LastTr, LastKey, Tr, Key, Stat) ->
             Stat#{KeyToUpdate => {Count, AccTime, NewOwnTime}}
     end.
 
-count_key(#tr{event = call}, Key) when Key =/= no_key -> Key;
+count_key(#tr{event = call}, Key)
+  when Key =/= no_key -> Key;
 count_key(#tr{}, _) -> no_key.
 
-acc_time_key({_, 0}, #tr{event = Event}, Key) when ?is_return(Event), Key =/= no_key -> Key;
+acc_time_key({_, 0}, #tr{event = Event}, Key)
+  when ?is_return(Event), Key =/= no_key -> Key;
 acc_time_key(_, #tr{}, _) -> no_key.
 
-own_time_key(#tr{event = call}, LastKey, #tr{}, _) when LastKey =/= no_key -> LastKey;
-own_time_key(_, _, #tr{event = Event}, Key) when ?is_return(Event), Key =/= no_key -> Key;
+own_time_key(#tr{event = call}, PKey, #tr{}, _)
+  when PKey =/= no_key -> PKey;
+own_time_key(#tr{event = LEvent}, PKey, #tr{event = call}, _)
+  when ?is_return(LEvent), PKey =/= no_key -> PKey;
+own_time_key(_, _, #tr{event = Event}, Key)
+  when ?is_return(Event), Key =/= no_key -> Key;
 own_time_key(_, _, #tr{}, _) -> no_key.
 
 %% Call tree statistics for redundancy check
