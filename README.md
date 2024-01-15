@@ -1,14 +1,20 @@
 [![GitHub Actions](https://github.com/chrzaszcz/erlang_doctor/actions/workflows/test.yml/badge.svg)](https://github.com/chrzaszcz/erlang_doctor/actions)
 
-## Try it out now in your Erlang shell
+# Erlang Doctor
 
-To quickly try it out without including it as a dependency, copy & paste the following to your Erlang shell.
+Lightweight tracing, debugging and profiling tool, that collects traces from your system in an ETS table, putting minimal impact on the system.
+After collecting the traces, you can query and analyse them.
+By separating data collection from analysis, this tool helps you limit unnecessary repetition and guesswork.
+
+## Quick start
+
+To quickly try it out right now, copy & paste the following to your Erlang shell:
 
 ```erlang
 P = "/tmp/tr.erl", ssl:start(), inets:start(), {ok, {{_, 200, _}, _, Src}} = httpc:request("https://git.io/fj024"), file:write_file(P, Src), {ok, tr, B} = compile:file(P, binary), code:load_binary(tr, P, B), rr(P), tr:start().
 ```
 
-This snippet downloads the `tr` module from GitHub, compiles and starts it.
+This snippet downloads, compiles and starts the `tr` module from the `master` branch.
 Your Erlang Doctor is now ready to use!
 
 The easiest way to use it is the following:
@@ -23,24 +29,25 @@ You should see the collected traces for the call and return of `your_module:some
 
 This compact tool is capable of much more - see below.
 
-## Include it as an application
+### Include it as an application
 
 To avoid copy-pasting the snippet shown above, you can include `erlang_doctor` in your dependencies in `rebar.config`.
 There is a [Hex package](https://hex.pm/packages/erlang_doctor) as well.
 
-## Use it during development
+### Use it during development
 
-You can make Erlang Doctor available in the Erlang/Rebar3 shell during development by loading it in your `~/.erlang` file:
+You can make Erlang Doctor available in the Erlang/Rebar3 shell during development by cloning it to `ERLANG_DOCTOR_PATH`,
+calling `rebar3 compile`, and loading it in your `~/.erlang` file:
 
 ```erlang
-code:add_path("~/dev/erlang_doctor/_build/default/lib/erlang_doctor/ebin").
+code:add_path("ERLANG_DOCTOR_PATH/erlang_doctor/_build/default/lib/erlang_doctor/ebin").
 code:load_file(tr).
 ```
 
 ## Tracing: data collection
 
-Test suite helpers from `tr_SUITE.erl` are used here as examples.
-You can follow these examples on your own - just call `rebar3 shell` in the project root directory.
+The test suite helpers from `tr_SUITE.erl` are used here as examples.
+You can follow these examples on your own - just call `rebar3 as test shell` in `ERLANG_DOCTOR_PATH`.
 
 ### Starting the tracer: `start`, `start_link`
 
@@ -49,7 +56,7 @@ There is `tr:start_link/1` as well, but it is intended for use with the whole `e
 Both functions can also take a second argument, which is a map with more advanced options:
 
 - `tab`: collected traces are stored in an ETS table with this name (default: `trace`),
-- `limit`: maximum number of traces in the table - when it is reached, tracing is stopped.
+- `limit`: maximum number of traces in the table - when it is reached, tracing is stopped (default: no limit).
 
 In this example we start the `tr` module in the simplest way:
 
@@ -58,12 +65,12 @@ In this example we start the `tr` module in the simplest way:
 {ok, <0.218.0>}
 ```
 
-### Tracing: `trace`
+### Start tracing with `trace`
 
 To function calls for given modules, use `tr:trace/1`, providing a list of traced modules:
 
 ```erlang
-3> tr:trace([tr_SUITE]).
+2> tr:trace([tr_SUITE]).
 ok
 ```
 
@@ -85,16 +92,16 @@ Now we can call some functions - let's trace the following function call.
 It calculates the factorial recursively and sleeps 1 ms between each step.
 
 ```erlang
-4> tr_SUITE:sleepy_factorial(3).
+3> tr_SUITE:sleepy_factorial(3).
 6
 ```
 
 ### Stop tracing
 
-Stop tracing with the following function:
+You can stop tracing with the following function:
 
 ```erlang
-5> tr:stop_tracing().
+4> tr:stop_tracing().
 ok
 ```
 
@@ -124,7 +131,7 @@ They are stored as `#tr` records with the following fields:
 It's useful to read the record definitions before trace analysis:
 
 ```erlang
-6> rr(tr).
+5> rr(tr).
 [msg,node,tr]
 ```
 
@@ -135,7 +142,7 @@ The snippet shown at the top of this README includes this already.
 Use `tr:select/0` to select all collected traces.
 
 ```erlang
-7> tr:select().
+6> tr:select().
 [#tr{index = 1, pid = <0.175.0>, event = call,
      mfa = {tr_SUITE, sleepy_factorial, 1},
      data = [3],
@@ -170,14 +177,14 @@ The `tr:select/1` function accepts a fun that is passed to `ets:fun2ms/1`.
 This way you can limit the selection to specific items and select only some fields from the `tr` record:
 
 ```erlang
-8> tr:select(fun(#tr{event = call, data = [N]}) -> N end).
+7> tr:select(fun(#tr{event = call, data = [N]}) -> N end).
 [3, 2, 1, 0]
 ```
 
 Use `tr:select/2` to further filter the results by searching for a term in `#tr.data` (recursively searching in lists, tuples and maps).
 
 ```erlang
-9> tr:select(fun(T) -> T end, 2).
+8> tr:select(fun(T) -> T end, 2).
 [#tr{index = 2, pid = <0.175.0>, event = call,
      mfa = {tr_SUITE, sleepy_factorial, 1},
      data = [2],
@@ -189,10 +196,11 @@ Use `tr:select/2` to further filter the results by searching for a term in `#tr.
 
 ### Trace filtering: `filter`
 
-Sometimes it might be easier to use `tr:filter/1`. You can use e.g. `tr:contains_data/2` to search for a term like in the example above.
+Sometimes it might be easier to use `tr:filter/1`, because it can accept any function as the argument.
+You can use `tr:contains_data/2` to search for a term like in the example above.
 
 ```erlang
-10> Traces = tr:filter(fun(T) -> tr:contains_data(2, T) end).
+9> Traces = tr:filter(fun(T) -> tr:contains_data(2, T) end).
 [#tr{index = 2, pid = <0.175.0>, event = call,
      mfa = {tr_SUITE, sleepy_factorial, 1},
      data = [2],
@@ -202,7 +210,19 @@ Sometimes it might be easier to use `tr:filter/1`. You can use e.g. `tr:contains
      data = 2, ts = 1559134178225155}]
 ```
 
-There is also `tr:filter/2` which can be used to search in a different table than the current one - or in a list:
+
+The provided function is a predicate, which has to return `true` for the matching traces.
+For other traces it can return another value, or even raise an exception:
+
+```erlang
+10> Traces = tr:filter(fun(#tr{data = [2]}) -> true end).
+[#tr{index = 2, pid = <0.175.0>, event = call,
+     mfa = {tr_SUITE, sleepy_factorial, 1},
+     data = [2],
+     ts = 1559134178219102}]
+```
+
+There is also `tr:filter/2`, which can be used to search in a different table than the current one - or in a list:
 
 ```erlang
 11> tr:filter(fun(#tr{event = call}) -> true end, Traces).
@@ -214,7 +234,7 @@ There is also `tr:filter/2` which can be used to search in a different table tha
 
 ### Tracebacks for filtered traces: `tracebacks`
 
-To find the tracebacks (call stacks) for matching traces, use `tr:tracebacks/1`:
+To find the tracebacks (stack traces) for matching traces, use `tr:tracebacks/1`:
 
 ```erlang
 12> tr:tracebacks(fun(#tr{data = 1}) -> true end).
@@ -232,12 +252,11 @@ To find the tracebacks (call stacks) for matching traces, use `tr:tracebacks/1`:
       ts = 1617097424674397}]]
 ```
 
-Note that by specifying `data = 1` we are only matching return traces as call traces always have a list in `data`.
-Only one traceback is returned. It starts with a matching call that returned `1`. What follows is the call stack
-for this call.
+Note, that by specifying `data = 1` we are only matching return traces, as call traces always have a list in `data`.
+Only one traceback is returned. It starts with a call that returned `1`. What follows is the stack trace for this call.
 
-One can notice that the call for 0 also returned 1, but the call tree gets pruned - whenever two tracebacks overlap, only the shorter one is left.
-You can change this by returning tracebacks for all matching traces even if they overlap, setting the `output` option to `all`. All options are included in the second argument, which is a map:
+One can notice that the call for 0 also returned 1, but the call tree got pruned - whenever two tracebacks overlap, only the shorter one is left.
+You can change this by returning tracebacks for all matching traces even if they overlap, setting the `output` option to `all`. All options are specified in the second argument, which is a map:
 
 ```erlang
 13> tr:tracebacks(fun(#tr{data = 1}) -> true end, #{output => all}).
@@ -274,7 +293,7 @@ You can change this by returning tracebacks for all matching traces even if they
 The third possibility is `output => longest` which does the opposite of pruning, leaving only the longest tracabecks when they overlap:
 
 ```erlang
-32> tr:tracebacks(fun(#tr{data = 1}) -> true end, #{output => longest}).
+14> tr:tracebacks(fun(#tr{data = 1}) -> true end, #{output => longest}).
 [[#tr{index = 6,pid = <0.219.0>,event = call,
       mfa = {tr_SUITE,sleepy_factorial,1},
       data = [0],
@@ -297,18 +316,18 @@ All possible options for `tracebacks/2`:
 
 - `tab` is the table or list which is like the second argument of `tr:filter/2`,
 - `output` - `shortest` (default), `all`, `longest` - see above.
-- `format` - `list` (default), `tree` - makes it possible to return the traces in form of a call tree instead of a list of tracebacks. Trees don't distinguish between `all` and `longest` output formats.
-- `order` - `top_down` (default), `bottom_up`. Changes call order in each tracaback, only for the `list` format.
-- `limit` - positive integer or `infinity` (default). Limits the number of matched traces. The actual number of tracebacks returned can be less unless `output => all`
+- `format` - `list` (default), `tree` - returns a call tree instead of a list of tracebacks. Trees don't distinguish between `all` and `longest` output formats.
+- `order` - `top_down` (default), `bottom_up` - call order in each tracaback; only for the `list` format.
+- `limit` - positive integer or `infinity` (default) - limits the number of matched traces. The actual number of tracebacks returned can be smaller unless `output => all`
 
-There are also functions: `traceback/1` and `traceback/2`. They set `limit` to one and return only one trace if it exists. The options for `traceback/2` are the same as for `traceback/2` except `limit` and `format`. Additionaly, it is possible to pass a `tr` record (or an index) directly to `traceback/1` to obtain the traceback for the provided trace event.
+There are also functions `traceback/1` and `traceback/2`. They set `limit` to one and return only one trace if it exists. The options for `traceback/2` are the same as for `traceback/2` except `limit` and `format`. Additionally, it is possible to pass a `tr` record (or an index) directly to `traceback/1` to obtain the traceback for the provided trace event.
 
 ### Trace ranges for filtered traces: `ranges`
 
 To get a list of traces between each matching call and the corresponding return, use `tr:ranges/1`:
 
 ```erlang
-14> tr:ranges(fun(#tr{data=[1]}) -> true end).
+15> tr:ranges(fun(#tr{data=[1]}) -> true end).
 [[#tr{index = 3, pid = <0.175.0>, event = call,
       mfa = {tr_SUITE, sleepy_factorial, 1},
       data = [1],
@@ -338,12 +357,12 @@ There are two additional function: `tr:range/1` and `tr:range/2`, which return o
 It is easy to replay a particular function call with `tr:do/1`:
 
 ```erlang
-15> [T] = tr:filter(fun(#tr{data = [3]}) -> true end).
+16> [T] = tr:filter(fun(#tr{data = [3]}) -> true end).
 [#tr{index = 1, pid = <0.175.0>, event = call,
      mfa = {tr_SUITE, sleepy_factorial, 1},
      data = [3],
      ts = 1559134178217371}]
-16> tr:do(T).
+17> tr:do(T).
 6
 ```
 
@@ -356,16 +375,16 @@ Use `tr:lookup/1` to obtain the trace for an index.
 
 ## Profiling
 
+You can quickly get a hint about possible bottlenecks and redundancies in your system with function call statistics.
+
 ### Call statistics: `call_stat`
 
-Call statistics - for all calls. The argument of `tr:call_stat/1` is a function that returns a key
-by which the traces are grouped.
-
+The argument of `tr:call_stat/1` is a function that returns a key by which the traces are grouped.
 The simplest way to use this function is to look at the total number of calls and their time.
 To do this, we group all calls under one key, e.g. `total`:
 
 ```erlang
-17> tr:call_stat(fun(_) -> total end).
+18> tr:call_stat(fun(_) -> total end).
 #{total => {4, 7785, 7785}}
 ```
 
@@ -378,26 +397,26 @@ For nested calls we only take into account the outermost call, so this means tha
 Let's see how this looks like for individual steps - we can group the stats by the function argument:
 
 ```erlang
-18> tr:call_stat(fun(#tr{data = [N]}) -> N end).
+19> tr:call_stat(fun(#tr{data = [N]}) -> N end).
 #{0 => {1, 2039, 2039},
   1 => {1, 3961, 1922},
   2 => {1, 6053, 2092},
   3 => {1, 7785, 1732}}
 ```
 
-You can use the key function to do any filtering as well:
+You can use the provided function to do filtering as well:
 
 ```erlang
-19> tr:call_stat(fun(#tr{data = [N]}) when N < 3 -> N end).
+20> tr:call_stat(fun(#tr{data = [N]}) when N < 3 -> N end).
 #{0 => {1, 2039, 2039}, 1 => {1, 3961, 1922}, 2 => {1, 6053, 2092}}
 ```
 
-### Sorted call statistics: `sorted_call_stat`, `print_sorted_call_stat`
+### Sorted call statistics: `sorted_call_stat`
 
 You can sort the call stat by accumulated time, descending:
 
 ```erlang
-20> tr:sorted_call_stat(fun(#tr{data = [N]}) -> N end).
+21> tr:sorted_call_stat(fun(#tr{data = [N]}) -> N end).
 [{3, 1, 7785, 1732},
  {2, 1, 6053, 2092},
  {1, 1, 3961, 1922},
@@ -405,11 +424,11 @@ You can sort the call stat by accumulated time, descending:
 ```
 
 The first element of each tuple is the key, the rest is the same as above.
-To pretty print it, use `tr:print_sorted_call_stat/2`.
+To pretty-print it, use `tr:print_sorted_call_stat/2`.
 The second argument limits the table row number, e.g. we can only print the top 3 items:
 
 ```erlang
-21> tr:print_sorted_call_stat(fun(#tr{data = [N]}) -> N end, 3).
+22> tr:print_sorted_call_stat(fun(#tr{data = [N]}) -> N end, 3).
 3  1  7785  1732
 2  1  6053  2092
 1  1  3961  1922
@@ -422,20 +441,20 @@ where corresponding function calls and returns have the same arguments and retur
 When such functions take a lot of time and do not have useful side effects, they can be often optimized.
 
 As an example, let's trace the call to a function which calculates the 4th element of the Fibonacci Sequence
-in a recursive way. Erlang Doctor has to be started and the trace table should be empty.
+in a recursive way. Erlang Doctor has to be started, and the `trace` table should be empty.
 
 ```erlang
-5> tr:trace([tr_SUITE]).
+23> tr:trace([tr_SUITE]).
 ok
-6> tr_SUITE:fib(4).
+24> tr_SUITE:fib(4).
 5
-7> tr:stop_tracing().
+25> tr:stop_tracing().
 ```
 
 Now it is possible to print the most time consuming call trees that repeat at least twice:
 
 ```erlang
-16> tr:top_call_trees().
+26> tr:top_call_trees().
 [{13,2,
   #node{module = tr_SUITE,function = fib,
         args = [2],
@@ -455,7 +474,7 @@ Now it is possible to print the most time consuming call trees that repeat at le
         result = {return,1}}}]
 ```
 
-The resulting list contains the tuples `{Time, Count, Tree}` where `Time` is the accumulated time spent in the tree
+The resulting list contains tuples `{Time, Count, Tree}` where `Time` is the accumulated time (in microseconds) spent in the tree,
 and `Count` is the number of times the tree repeated. The list is sorted by `Time`, descending.
 In the example above `fib(2)` was called twice and `fib(1)` was called 3 times,
 what already shows that the recursive implementation is suboptimal.
@@ -473,23 +492,23 @@ As an exercise, try calling `tr:top_call_trees(#{min_count => 1000})` for `fib(2
 To get the current table name, use `tr:tab/0`:
 
 ```erlang
-22> tr:tab().
+27> tr:tab().
 trace
 ```
 
 To switch to a new table, use `tr:set_tab/1`. The table need not exist.
 
 ```erlang
-23> tr:set_tab(tmp).
+28> tr:set_tab(tmp).
 ok
 ```
 
 Now you can collect traces to the new table without changing the original one.
 
 ```erlang
-24> tr:trace([lists]), lists:seq(1, 10), tr:stop_tracing().
+29> tr:trace([lists]), lists:seq(1, 10), tr:stop_tracing().
 ok
-25> tr:select().
+30> tr:select().
 [#tr{index = 1, pid = <0.175.0>, event = call,
      mfa = {lists, ukeysort, 2},
      data = [1,
