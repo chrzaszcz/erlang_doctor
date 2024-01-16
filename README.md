@@ -1,6 +1,6 @@
-[![GitHub Actions](https://github.com/chrzaszcz/erlang_doctor/actions/workflows/test.yml/badge.svg)](https://github.com/chrzaszcz/erlang_doctor/actions)
-
 # Erlang Doctor
+
+[![GitHub Actions](https://github.com/chrzaszcz/erlang_doctor/actions/workflows/test.yml/badge.svg)](https://github.com/chrzaszcz/erlang_doctor/actions)
 
 Lightweight tracing, debugging and profiling tool, that collects traces from your system in an ETS table, putting minimal impact on the system.
 After collecting the traces, you can query and analyse them.
@@ -67,7 +67,7 @@ In this example we start the `tr` module in the simplest way:
 
 ### Start tracing with `trace`
 
-To function calls for given modules, use `tr:trace/1`, providing a list of traced modules:
+To trace function calls for given modules, use `tr:trace/1`, providing a list of traced modules:
 
 ```erlang
 2> tr:trace([tr_SUITE]).
@@ -81,7 +81,7 @@ There is a shortcut as well: `tr:trace_app(your_app)`.
 If you want to trace selected processes instead of all of them, you can use
 `tr:trace(Modules, Pids)`, which is a shortcut for `tr:trace(#{modules => Modules, pids => Pids})`.
 In fact, `tr:trace(Modules)` is a shortcut for `tr:trace(#{modules => Modules})`,
-and the `trace/1` function accepts a map of options with the following keys:
+and the `tr:trace/1` function accepts a map of options with the following keys:
 
 - `modules`: a list of module names or `{Module, Function, Arity}` tuples. The list is empty by default.
 - `pids`: a list of Pids of processes to trace, or the atom `all` (default) to trace all processes.
@@ -312,7 +312,7 @@ The third possibility is `output => longest` which does the opposite of pruning,
       ts = 1617099584108006}]]
 ```
 
-All possible options for `tracebacks/2`:
+All possible options for `tr:tracebacks/2`:
 
 - `tab` is the table or list which is like the second argument of `tr:filter/2`,
 - `output` - `shortest` (default), `all`, `longest` - see above.
@@ -320,7 +320,7 @@ All possible options for `tracebacks/2`:
 - `order` - `top_down` (default), `bottom_up` - call order in each tracaback; only for the `list` format.
 - `limit` - positive integer or `infinity` (default) - limits the number of matched traces. The actual number of tracebacks returned can be smaller unless `output => all`
 
-There are also functions `traceback/1` and `traceback/2`. They set `limit` to one and return only one trace if it exists. The options for `traceback/2` are the same as for `traceback/2` except `limit` and `format`. Additionally, it is possible to pass a `tr` record (or an index) directly to `traceback/1` to obtain the traceback for the provided trace event.
+There are also functions `tr:traceback/1` and `tr:traceback/2`. They set `limit` to one and return only one trace if it exists. The options for `tr:traceback/2` are the same as for `tr:traceback/2` except `limit` and `format`. Additionally, it is possible to pass a `tr` record (or an index) directly to `tr:traceback/1` to obtain the traceback for the provided trace event.
 
 ### Trace ranges for filtered traces: `ranges`
 
@@ -479,7 +479,7 @@ and `Count` is the number of times the tree repeated. The list is sorted by `Tim
 In the example above `fib(2)` was called twice and `fib(1)` was called 3 times,
 what already shows that the recursive implementation is suboptimal.
 
-There is also `top_call_trees/1` that takes a map of options with the following keys:
+There is also `tr:top_call_trees/1` that takes a map of options with the following keys:
 - `output` is `reduced` by default, but it can be set to `complete` where subtrees of already listed trees are also listed.
 - `min_count` is the minimum number of times a tree has to occur to be listed, the default is 2.
 - `min_time` is the minimum accumulated time for a tree, by default there is no minimum.
@@ -519,10 +519,10 @@ ok
 (...)
 ```
 
-You can dump a table to file with `tr:dump/2` - let's dump the `tmp` table:
+You can dump a table to file with `tr:dump/1` - let's dump the `tmp` table:
 
 ```erlang
-25> tr:dump("tmp.ets", tmp).
+25> tr:dump("tmp.ets").
 ok
 ```
 
@@ -539,7 +539,7 @@ In a new Erlang session we can load the data with `tr:load/1`. This will set the
 tmp
 ```
 
-Finally, you can remove all traces from the ETS table with `tr:clean/1`.
+Finally, you can remove all traces from the ETS table with `tr:clean/0`.
 
 ```erlang
 5> tr:clean().
