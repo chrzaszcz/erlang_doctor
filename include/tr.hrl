@@ -3,10 +3,10 @@
 -record(tr, {index :: tr:index(),
              pid :: pid(),
              event :: call | return | exception | send | recv,
-             mfa :: mfa() | undefined,
+             mfa = no_mfa :: mfa() | no_mfa,
              data :: term(),
              ts :: integer(),
-             extra :: #msg{} | undefined}).
+             info = no_info :: #msg{} | no_info}).
 
 -record(node, {module :: module(),
                function :: atom(),

@@ -54,10 +54,10 @@
 -record(tr, {index :: index(),
              pid :: pid(),
              event :: call | return | exception | send | recv,
-             mfa :: mfa() | undefined,
+             mfa = no_mfa :: mfa() | no_mfa,
              data :: term(),
              ts :: integer(),
-             extra :: #msg{} | undefined}).
+             info = no_info :: #msg{} | no_info}).
 
 -define(is_return(Event), (Event =:= return orelse Event =:= exception)).
 -define(is_msg(Event), (Event =:= send orelse Event =:= recv)).
@@ -554,9 +554,9 @@ handle_trace(Trace, State) ->
     State.
 
 handle_send_trace(Pid, Event, Msg, To, TS, #{tab := Tab, index := I} = State) ->
-    Extra = #msg{to = To, exists = Event =:= send},
+    Info = #msg{to = To, exists = Event =:= send},
     ets:insert(Tab, #tr{index = I, pid = Pid, event = send, data = Msg,
-                        ts = usec_from_now(TS), extra = Extra}),
+                        ts = usec_from_now(TS), info = Info}),
     State#{index := I + 1}.
 
 handle_recv_trace(Pid, Msg, TS, #{tab := Tab, index := I} = State) ->
