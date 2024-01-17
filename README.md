@@ -49,7 +49,7 @@ code:load_file(tr).
 The test suite helpers from `tr_SUITE.erl` are used here as examples.
 You can follow these examples on your own - just call `rebar3 as test shell` in `ERLANG_DOCTOR_PATH`.
 
-### Starting the tracer: `start`, `start_link`
+### Setting up: `start`, `start_link`
 
 The first thing to do is to start the tracer with `tr:start/1`.
 There is `tr:start_link/1` as well, but it is intended for use with the whole `erlang_doctor` application.
@@ -65,7 +65,7 @@ In this example we start the `tr` module in the simplest way:
 {ok, <0.218.0>}
 ```
 
-### Start tracing with `trace`
+### Tracing with `trace`
 
 To trace function calls for given modules, use `tr:trace/1`, providing a list of traced modules:
 
@@ -96,7 +96,7 @@ It calculates the factorial recursively and sleeps 1 ms between each step.
 6
 ```
 
-### Stop tracing
+### Stopping tracing
 
 You can stop tracing with the following function:
 
@@ -119,13 +119,13 @@ The collected traces are stored in an ETS table (default name: `trace`).
 They are stored as `#tr` records with the following fields:
 
 - `index`: trace identifier, auto-incremented for each received trace.
-- `pid`: process ID associated with the trace.
+- `pid`: process identifier associated with the trace.
 - `event`: `call`, `return` or `exception` for function traces; `send` or `recv` for messages.
-- `mfa`: an MFA tuple: module name, function name and function arity; undefined for messages.
+- `mfa`: `{Module, Function, Arity}` for function traces; `no_mfa` for messages.
 - `data`: argument list (for calls), returned value (for returns) or class and value (for exceptions).
 - `timestamp` in microseconds.
-- `extra`: only for `send` events; `#msg` record with the following fields:
-    - `to`: message recipient (Pid),
+- `info`: For function traces and `recv` events it is `no_info`. For `send` events it is a `#msg` record with the following fields:
+    - `to`: message recipient (pid),
     - `exists`: boolean, indicates if the recipient process existed.
 
 It's useful to read the record definitions before trace analysis:
@@ -143,34 +143,34 @@ Use `tr:select/0` to select all collected traces.
 
 ```erlang
 6> tr:select().
-[#tr{index = 1, pid = <0.175.0>, event = call,
-     mfa = {tr_SUITE, sleepy_factorial, 1},
+[#tr{index = 1,pid = <0.395.0>,event = call,
+     mfa = {tr_SUITE,sleepy_factorial,1},
      data = [3],
-     ts = 1559134178217371},
- #tr{index = 2, pid = <0.175.0>, event = call,
-     mfa = {tr_SUITE, sleepy_factorial, 1},
+     ts = 1705475521743239,info = no_info},
+ #tr{index = 2,pid = <0.395.0>,event = call,
+     mfa = {tr_SUITE,sleepy_factorial,1},
      data = [2],
-     ts = 1559134178219102},
- #tr{index = 3, pid = <0.175.0>, event = call,
-     mfa = {tr_SUITE, sleepy_factorial, 1},
+     ts = 1705475521744690,info = no_info},
+ #tr{index = 3,pid = <0.395.0>,event = call,
+     mfa = {tr_SUITE,sleepy_factorial,1},
      data = [1],
-     ts = 1559134178221192},
- #tr{index = 4, pid = <0.175.0>, event = call,
-     mfa = {tr_SUITE, sleepy_factorial, 1},
+     ts = 1705475521746470,info = no_info},
+ #tr{index = 4,pid = <0.395.0>,event = call,
+     mfa = {tr_SUITE,sleepy_factorial,1},
      data = [0],
-     ts = 1559134178223107},
- #tr{index = 5, pid = <0.175.0>, event = return,
-     mfa = {tr_SUITE, sleepy_factorial, 1},
-     data = 1, ts = 1559134178225146},
- #tr{index = 6, pid = <0.175.0>, event = return,
-     mfa = {tr_SUITE, sleepy_factorial, 1},
-     data = 1, ts = 1559134178225153},
- #tr{index = 7, pid = <0.175.0>, event = return,
-     mfa = {tr_SUITE, sleepy_factorial, 1},
-     data = 2, ts = 1559134178225155},
- #tr{index = 8, pid = <0.175.0>, event = return,
-     mfa = {tr_SUITE, sleepy_factorial, 1},
-     data = 6, ts = 1559134178225156}]
+     ts = 1705475521748499,info = no_info},
+ #tr{index = 5,pid = <0.395.0>,event = return,
+     mfa = {tr_SUITE,sleepy_factorial,1},
+     data = 1,ts = 1705475521750451,info = no_info},
+ #tr{index = 6,pid = <0.395.0>,event = return,
+     mfa = {tr_SUITE,sleepy_factorial,1},
+     data = 1,ts = 1705475521750453,info = no_info},
+ #tr{index = 7,pid = <0.395.0>,event = return,
+     mfa = {tr_SUITE,sleepy_factorial,1},
+     data = 2,ts = 1705475521750454,info = no_info},
+ #tr{index = 8,pid = <0.395.0>,event = return,
+     mfa = {tr_SUITE,sleepy_factorial,1},
+     data = 6,ts = 1705475521750455,info = no_info}]
 ```
 
 The `tr:select/1` function accepts a fun that is passed to `ets:fun2ms/1`.
@@ -185,51 +185,50 @@ Use `tr:select/2` to further filter the results by searching for a term in `#tr.
 
 ```erlang
 8> tr:select(fun(T) -> T end, 2).
-[#tr{index = 2, pid = <0.175.0>, event = call,
-     mfa = {tr_SUITE, sleepy_factorial, 1},
+[#tr{index = 2,pid = <0.395.0>,event = call,
+     mfa = {tr_SUITE,sleepy_factorial,1},
      data = [2],
-     ts = 1559134178219102},
- #tr{index = 7, pid = <0.175.0>, event = return,
-     mfa = {tr_SUITE, sleepy_factorial, 1},
-     data = 2, ts = 1559134178225155}]
+     ts = 1705475521744690,info = no_info},
+ #tr{index = 7,pid = <0.395.0>,event = return,
+     mfa = {tr_SUITE,sleepy_factorial,1},
+     data = 2,ts = 1705475521750454,info = no_info}]
 ```
 
 ### Trace filtering: `filter`
 
 Sometimes it might be easier to use `tr:filter/1`, because it can accept any function as the argument.
-You can use `tr:contains_data/2` to search for a term like in the example above.
+You can use `tr:contains_data/2` to search for the same term as in the example above.
 
 ```erlang
 9> Traces = tr:filter(fun(T) -> tr:contains_data(2, T) end).
-[#tr{index = 2, pid = <0.175.0>, event = call,
-     mfa = {tr_SUITE, sleepy_factorial, 1},
+[#tr{index = 2,pid = <0.395.0>,event = call,
+     mfa = {tr_SUITE,sleepy_factorial,1},
      data = [2],
-     ts = 1559134178219102},
- #tr{index = 7, pid = <0.175.0>, event = return,
-     mfa = {tr_SUITE, sleepy_factorial, 1},
-     data = 2, ts = 1559134178225155}]
+     ts = 1705475521744690,info = no_info},
+ #tr{index = 7,pid = <0.395.0>,event = return,
+     mfa = {tr_SUITE,sleepy_factorial,1},
+     data = 2,ts = 1705475521750454,info = no_info}]
 ```
-
 
 The provided function is a predicate, which has to return `true` for the matching traces.
 For other traces it can return another value, or even raise an exception:
 
 ```erlang
-10> Traces = tr:filter(fun(#tr{data = [2]}) -> true end).
-[#tr{index = 2, pid = <0.175.0>, event = call,
-     mfa = {tr_SUITE, sleepy_factorial, 1},
+10> tr:filter(fun(#tr{data = [2]}) -> true end).
+[#tr{index = 2,pid = <0.395.0>,event = call,
+     mfa = {tr_SUITE,sleepy_factorial,1},
      data = [2],
-     ts = 1559134178219102}]
+     ts = 1705475521744690,info = no_info}]
 ```
 
 There is also `tr:filter/2`, which can be used to search in a different table than the current one - or in a list:
 
 ```erlang
 11> tr:filter(fun(#tr{event = call}) -> true end, Traces).
-[#tr{index = 2, pid = <0.175.0>, event = call,
-     mfa = {tr_SUITE, sleepy_factorial, 1},
+[#tr{index = 2,pid = <0.395.0>,event = call,
+     mfa = {tr_SUITE,sleepy_factorial,1},
      data = [2],
-     ts = 1559134178219102}]
+     ts = 1705475521744690,info = no_info}]
 ```
 
 ### Tracebacks for filtered traces: `tracebacks`
@@ -238,18 +237,18 @@ To find the tracebacks (stack traces) for matching traces, use `tr:tracebacks/1`
 
 ```erlang
 12> tr:tracebacks(fun(#tr{data = 1}) -> true end).
-[[#tr{index = 5,pid = <0.219.0>,event = call,
+[[#tr{index = 3,pid = <0.395.0>,event = call,
       mfa = {tr_SUITE,sleepy_factorial,1},
       data = [1],
-      ts = 1617097424677636},
-  #tr{index = 4,pid = <0.219.0>,event = call,
+      ts = 1705475521746470,info = no_info},
+  #tr{index = 2,pid = <0.395.0>,event = call,
       mfa = {tr_SUITE,sleepy_factorial,1},
       data = [2],
-      ts = 1617097424675625},
-  #tr{index = 3,pid = <0.219.0>,event = call,
+      ts = 1705475521744690,info = no_info},
+  #tr{index = 1,pid = <0.395.0>,event = call,
       mfa = {tr_SUITE,sleepy_factorial,1},
       data = [3],
-      ts = 1617097424674397}]]
+      ts = 1705475521743239,info = no_info}]]
 ```
 
 Note, that by specifying `data = 1` we are only matching return traces, as call traces always have a list in `data`.
@@ -260,56 +259,56 @@ You can change this by returning tracebacks for all matching traces even if they
 
 ```erlang
 13> tr:tracebacks(fun(#tr{data = 1}) -> true end, #{output => all}).
-[[#tr{index = 6,pid = <0.219.0>,event = call,
+[[#tr{index = 4,pid = <0.395.0>,event = call,
       mfa = {tr_SUITE,sleepy_factorial,1},
       data = [0],
-      ts = 1617099584113726},
-  #tr{index = 5,pid = <0.219.0>,event = call,
+      ts = 1705475521748499,info = no_info},
+  #tr{index = 3,pid = <0.395.0>,event = call,
       mfa = {tr_SUITE,sleepy_factorial,1},
       data = [1],
-      ts = 1617099584111714},
-  #tr{index = 4,pid = <0.219.0>,event = call,
+      ts = 1705475521746470,info = no_info},
+  #tr{index = 2,pid = <0.395.0>,event = call,
       mfa = {tr_SUITE,sleepy_factorial,1},
       data = [2],
-      ts = 1617099584109773},
-  #tr{index = 3,pid = <0.219.0>,event = call,
+      ts = 1705475521744690,info = no_info},
+  #tr{index = 1,pid = <0.395.0>,event = call,
       mfa = {tr_SUITE,sleepy_factorial,1},
       data = [3],
-      ts = 1617099584108006}],
- [#tr{index = 5,pid = <0.219.0>,event = call,
+      ts = 1705475521743239,info = no_info}],
+ [#tr{index = 3,pid = <0.395.0>,event = call,
       mfa = {tr_SUITE,sleepy_factorial,1},
       data = [1],
-      ts = 1617099584111714},
-  #tr{index = 4,pid = <0.219.0>,event = call,
+      ts = 1705475521746470,info = no_info},
+  #tr{index = 2,pid = <0.395.0>,event = call,
       mfa = {tr_SUITE,sleepy_factorial,1},
       data = [2],
-      ts = 1617099584109773},
-  #tr{index = 3,pid = <0.219.0>,event = call,
+      ts = 1705475521744690,info = no_info},
+  #tr{index = 1,pid = <0.395.0>,event = call,
       mfa = {tr_SUITE,sleepy_factorial,1},
       data = [3],
-      ts = 1617099584108006}]]
+      ts = 1705475521743239,info = no_info}]]
 ```
 
 The third possibility is `output => longest` which does the opposite of pruning, leaving only the longest tracabecks when they overlap:
 
 ```erlang
 14> tr:tracebacks(fun(#tr{data = 1}) -> true end, #{output => longest}).
-[[#tr{index = 6,pid = <0.219.0>,event = call,
+[[#tr{index = 4,pid = <0.395.0>,event = call,
       mfa = {tr_SUITE,sleepy_factorial,1},
       data = [0],
-      ts = 1617099584113726},
-  #tr{index = 5,pid = <0.219.0>,event = call,
+      ts = 1705475521748499,info = no_info},
+  #tr{index = 3,pid = <0.395.0>,event = call,
       mfa = {tr_SUITE,sleepy_factorial,1},
       data = [1],
-      ts = 1617099584111714},
-  #tr{index = 4,pid = <0.219.0>,event = call,
+      ts = 1705475521746470,info = no_info},
+  #tr{index = 2,pid = <0.395.0>,event = call,
       mfa = {tr_SUITE,sleepy_factorial,1},
       data = [2],
-      ts = 1617099584109773},
-  #tr{index = 3,pid = <0.219.0>,event = call,
+      ts = 1705475521744690,info = no_info},
+  #tr{index = 1,pid = <0.395.0>,event = call,
       mfa = {tr_SUITE,sleepy_factorial,1},
       data = [3],
-      ts = 1617099584108006}]]
+      ts = 1705475521743239,info = no_info}]]
 ```
 
 All possible options for `tr:tracebacks/2`:
@@ -327,21 +326,21 @@ There are also functions `tr:traceback/1` and `tr:traceback/2`. They set `limit`
 To get a list of traces between each matching call and the corresponding return, use `tr:ranges/1`:
 
 ```erlang
-15> tr:ranges(fun(#tr{data=[1]}) -> true end).
-[[#tr{index = 3, pid = <0.175.0>, event = call,
-      mfa = {tr_SUITE, sleepy_factorial, 1},
+15> tr:ranges(fun(#tr{data = [1]}) -> true end).
+[[#tr{index = 3,pid = <0.395.0>,event = call,
+      mfa = {tr_SUITE,sleepy_factorial,1},
       data = [1],
-      ts = 1559134178221192},
-  #tr{index = 4, pid = <0.175.0>, event = call,
-      mfa = {tr_SUITE, sleepy_factorial, 1},
+      ts = 1705475521746470,info = no_info},
+  #tr{index = 4,pid = <0.395.0>,event = call,
+      mfa = {tr_SUITE,sleepy_factorial,1},
       data = [0],
-      ts = 1559134178223107},
-  #tr{index = 5, pid = <0.175.0>, event = return,
-      mfa = {tr_SUITE, sleepy_factorial, 1},
-      data = 1, ts = 1559134178225146},
-  #tr{index = 6, pid = <0.175.0>, event = return,
-      mfa = {tr_SUITE, sleepy_factorial, 1},
-      data = 1, ts = 1559134178225153}]]
+      ts = 1705475521748499,info = no_info},
+  #tr{index = 5,pid = <0.395.0>,event = return,
+      mfa = {tr_SUITE,sleepy_factorial,1},
+      data = 1,ts = 1705475521750451,info = no_info},
+  #tr{index = 6,pid = <0.395.0>,event = return,
+      mfa = {tr_SUITE,sleepy_factorial,1},
+      data = 1,ts = 1705475521750453,info = no_info}]]
 ```
 
 There is also `tr:ranges/2` - it accepts a map of options with the following keys:
@@ -358,10 +357,10 @@ It is easy to replay a particular function call with `tr:do/1`:
 
 ```erlang
 16> [T] = tr:filter(fun(#tr{data = [3]}) -> true end).
-[#tr{index = 1, pid = <0.175.0>, event = call,
-     mfa = {tr_SUITE, sleepy_factorial, 1},
+[#tr{index = 1,pid = <0.395.0>,event = call,
+     mfa = {tr_SUITE,sleepy_factorial,1},
      data = [3],
-     ts = 1559134178217371}]
+     ts = 1705475521743239,info = no_info}]
 17> tr:do(T).
 6
 ```
@@ -385,30 +384,30 @@ To do this, we group all calls under one key, e.g. `total`:
 
 ```erlang
 18> tr:call_stat(fun(_) -> total end).
-#{total => {4, 7785, 7785}}
+#{total => {4,7216,7216}}
 ```
 
-Values of the returned map have the following format:
+Values of the returned map have the following format (time is in microseconds):
 
 ```{call_count(), acc_time(), own_time()}```
 
-In the example there are four calls, which took 7703 microseconds in total.
-For nested calls we only take into account the outermost call, so this means that the whole calculation took 7.703 ms.
+In the example there are four calls, which took 7216 microseconds in total.
+For nested calls we only take into account the outermost call, so this means that the whole calculation took 7.216 ms.
 Let's see how this looks like for individual steps - we can group the stats by the function argument:
 
 ```erlang
 19> tr:call_stat(fun(#tr{data = [N]}) -> N end).
-#{0 => {1, 2039, 2039},
-  1 => {1, 3961, 1922},
-  2 => {1, 6053, 2092},
-  3 => {1, 7785, 1732}}
+#{0 => {1,1952,1952},
+  1 => {1,3983,2031},
+  2 => {1,5764,1781},
+  3 => {1,7216,1452}}
 ```
 
 You can use the provided function to do filtering as well:
 
 ```erlang
 20> tr:call_stat(fun(#tr{data = [N]}) when N < 3 -> N end).
-#{0 => {1, 2039, 2039}, 1 => {1, 3961, 1922}, 2 => {1, 6053, 2092}}
+#{0 => {1,1952,1952},1 => {1,3983,2031},2 => {1,5764,1781}}
 ```
 
 ### Sorted call statistics: `sorted_call_stat`
@@ -417,10 +416,10 @@ You can sort the call stat by accumulated time, descending:
 
 ```erlang
 21> tr:sorted_call_stat(fun(#tr{data = [N]}) -> N end).
-[{3, 1, 7785, 1732},
- {2, 1, 6053, 2092},
- {1, 1, 3961, 1922},
- {0, 1, 2039, 2039}]
+[{3,1,7216,1452},
+ {2,1,5764,1781},
+ {1,1,3983,2031},
+ {0,1,1952,1952}]
 ```
 
 The first element of each tuple is the key, the rest is the same as above.
@@ -429,9 +428,10 @@ The second argument limits the table row number, e.g. we can only print the top 
 
 ```erlang
 22> tr:print_sorted_call_stat(fun(#tr{data = [N]}) -> N end, 3).
-3  1  7785  1732
-2  1  6053  2092
-1  1  3961  1922
+3  1  7216  1452
+2  1  5764  1781
+1  1  3983  2031
+ok
 ```
 
 ### Call tree statistics: `top_call_trees`
@@ -441,20 +441,23 @@ where corresponding function calls and returns have the same arguments and retur
 When such functions take a lot of time and do not have useful side effects, they can be often optimized.
 
 As an example, let's trace the call to a function which calculates the 4th element of the Fibonacci Sequence
-in a recursive way. Erlang Doctor has to be started, and the `trace` table should be empty.
+in a recursive way. The `trace` table should be empty, so let's clean it up first:
 
 ```erlang
-23> tr:trace([tr_SUITE]).
+23> tr:clean().
 ok
-24> tr_SUITE:fib(4).
-5
-25> tr:stop_tracing().
+24> tr:trace([tr_SUITE]).
+ok
+25> tr_SUITE:fib(4).
+3
+26> tr:stop_tracing().
+ok
 ```
 
 Now it is possible to print the most time consuming call trees that repeat at least twice:
 
 ```erlang
-26> tr:top_call_trees().
+27> tr:top_call_trees().
 [{13,2,
   #node{module = tr_SUITE,function = fib,
         args = [2],
@@ -492,37 +495,36 @@ As an exercise, try calling `tr:top_call_trees(#{min_count => 1000})` for `fib(2
 To get the current table name, use `tr:tab/0`:
 
 ```erlang
-27> tr:tab().
+28> tr:tab().
 trace
 ```
 
 To switch to a new table, use `tr:set_tab/1`. The table need not exist.
 
 ```erlang
-28> tr:set_tab(tmp).
+29> tr:set_tab(tmp).
 ok
 ```
 
 Now you can collect traces to the new table without changing the original one.
 
 ```erlang
-29> tr:trace([lists]), lists:seq(1, 10), tr:stop_tracing().
+30> tr:trace([lists]), lists:seq(1, 10), tr:stop_tracing().
 ok
-30> tr:select().
+31> tr:select().
 [#tr{index = 1, pid = <0.175.0>, event = call,
      mfa = {lists, ukeysort, 2},
      data = [1,
              [{'Traces', [#tr{index = 2, pid = <0.175.0>, event = call,
                              mfa = {tr_SUITE, sleepy_factorial, 1},
                              data = [2],
-
 (...)
 ```
 
 You can dump a table to file with `tr:dump/1` - let's dump the `tmp` table:
 
 ```erlang
-25> tr:dump("tmp.ets").
+32> tr:dump("tmp.ets").
 ok
 ```
 
@@ -531,7 +533,7 @@ In a new Erlang session we can load the data with `tr:load/1`. This will set the
 ```erlang
 1> tr:start().
 {ok, <0.181.0>}
-2> tr:load("traces.ets").
+2> tr:load("tmp.ets").
 {ok, tmp}
 3> tr:select().
 (...)
