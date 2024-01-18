@@ -1,5 +1,7 @@
 # Erlang Doctor
 
+[![Hex.pm Version](https://img.shields.io/hexpm/v/erlang_doctor)](https://hex.pm/packages/erlang_doctor)
+[![Hex Docs](https://img.shields.io/badge/hex-docs-yellow.svg)](https://hexdocs.pm/erlang_doctor/)
 [![GitHub Actions](https://github.com/chrzaszcz/erlang_doctor/actions/workflows/test.yml/badge.svg)](https://github.com/chrzaszcz/erlang_doctor/actions)
 
 Lightweight tracing, debugging and profiling tool, that collects traces from your system in an ETS table, putting minimal impact on the system.
@@ -29,7 +31,7 @@ You should see the collected traces for the call and return of `your_module:some
 
 This compact tool is capable of much more - see below.
 
-### Include it as an application
+### Include it as a dependency
 
 To avoid copy-pasting the snippet shown above, you can include `erlang_doctor` in your dependencies in `rebar.config`.
 There is a [Hex package](https://hex.pm/packages/erlang_doctor) as well.
@@ -51,14 +53,16 @@ You can follow these examples on your own - just call `rebar3 as test shell` in 
 
 ### Setting up: `start`, `start_link`
 
-The first thing to do is to start the tracer with `tr:start/1`.
-There is `tr:start_link/1` as well, but it is intended for use with the whole `erlang_doctor` application.
-Both functions can also take a second argument, which is a map with more advanced options:
+The first thing to do is to start the tracer with `tr:start/0`.
+
+There is also `tr:start/1`, which accepts [map of options](https://hexdocs.pm/erlang_doctor/tr.html#t:init_options/0), including:
 
 - `tab`: collected traces are stored in an ETS table with this name (default: `trace`),
 - `limit`: maximum number of traces in the table - when it is reached, tracing is stopped (default: no limit).
 
-In this example we start the `tr` module in the simplest way:
+There are `tr:start_link/0` and `tr:start_link/1` as well, and they are intended for use with the whole `erlang_doctor` application.
+
+For this tutorial we start the `tr` module in the simplest way:
 
 ```erlang
 1> tr:start().
@@ -75,18 +79,29 @@ ok
 ```
 
 You can provide `{Module, Function, Arity}` tuples in the list as well.
-To get a list of all modules from an application, use `tr:app_modules/1`.
-`tr:trace(tr:app_modules(your_app))` would trace all modules from `your_app`.
-There is a shortcut as well: `tr:trace_app(your_app)`.
+The function `tr:trace_app/1` traces an application, and `tr:trace_apps/1` traces multiple ones.
+
+If you need to trace an application and some additional modules, use `tr:app_modules/1` to get the list of modules for an application:
+
+```erlang
+tr:trace([Module1, Module2 | tr:app_modules(YourApp)]).
+```
+
 If you want to trace selected processes instead of all of them, you can use
-`tr:trace(Modules, Pids)`, which is a shortcut for `tr:trace(#{modules => Modules, pids => Pids})`.
-In fact, `tr:trace(Modules)` is a shortcut for `tr:trace(#{modules => Modules})`,
-and the `tr:trace/1` function accepts a map of options with the following keys:
+`tr:trace/2`:
+
+```erlang
+tr:trace([Module1, Module2], [Pid1, Pid2]).
+```
+
+The `tr:trace/1` function accepts a [map of options](https://hexdocs.pm/erlang_doctor/tr.html#t:trace_options/0), which include:
 
 - `modules`: a list of module names or `{Module, Function, Arity}` tuples. The list is empty by default.
 - `pids`: a list of Pids of processes to trace, or the atom `all` (default) to trace all processes.
 - `msg`: `none` (default), `all`, `send` or `recv`. Specifies which message events will be traced. By default no messages are traced.
 - `msg_trigger`: `after_traced_call` (default) or `always`. By default, traced messages in each process are stored after the first traced function call in that process. The goal is to limit the number of traced messages, which can be huge in the entire Erlang system. If you want all messages, set it to `always`.
+
+### Calling the traced function
 
 Now we can call some functions - let's trace the following function call.
 It calculates the factorial recursively and sleeps 1 ms between each step.
@@ -116,7 +131,7 @@ tr:trace(Modules), timer:sleep(1000), tr:stop_tracing().
 ## Debugging: data analysis
 
 The collected traces are stored in an ETS table (default name: `trace`).
-They are stored as `#tr` records with the following fields:
+They are stored as [`tr`](https://hexdocs.pm/erlang_doctor/tr.html#t:tr/0) records with the following fields:
 
 - `index`: trace identifier, auto-incremented for each received trace.
 - `pid`: process identifier associated with the trace.
@@ -130,10 +145,10 @@ It's useful to read the record definitions before trace analysis:
 
 ```erlang
 5> rr(tr).
-[msg,node,tr]
+[node,tr]
 ```
 
-The snippet shown at the top of this README includes this already.
+The snippet shown at the top of this page includes this already.
 
 ### Trace selection: `select`
 
@@ -172,7 +187,7 @@ Use `tr:select/0` to select all collected traces.
 ```
 
 The `tr:select/1` function accepts a fun that is passed to `ets:fun2ms/1`.
-This way you can limit the selection to specific items and select only some fields from the `tr` record:
+This way you can limit the selection to specific items and select only some fields from the [`tr`](https://hexdocs.pm/erlang_doctor/tr.html#t:tr/0) record:
 
 ```erlang
 7> tr:select(fun(#tr{event = call, data = [N]}) -> N end).
@@ -309,7 +324,7 @@ The third possibility is `output => longest` which does the opposite of pruning,
       ts = 1705475521743239,info = no_info}]]
 ```
 
-All possible options for `tr:tracebacks/2`:
+Possible [options](https://hexdocs.pm/erlang_doctor/tr.html#t:tb_options/0) for `tr:tracebacks/2` include:
 
 - `tab` is the table or list which is like the second argument of `tr:filter/2`,
 - `output` - `shortest` (default), `all`, `longest` - see above.
@@ -317,7 +332,7 @@ All possible options for `tr:tracebacks/2`:
 - `order` - `top_down` (default), `bottom_up` - call order in each tracaback; only for the `list` format.
 - `limit` - positive integer or `infinity` (default) - limits the number of matched traces. The actual number of tracebacks returned can be smaller unless `output => all`
 
-There are also functions `tr:traceback/1` and `tr:traceback/2`. They set `limit` to one and return only one trace if it exists. The options for `tr:traceback/2` are the same as for `tr:traceback/2` except `limit` and `format`. Additionally, it is possible to pass a `tr` record (or an index) directly to `tr:traceback/1` to obtain the traceback for the provided trace event.
+There are also functions `tr:traceback/1` and `tr:traceback/2`. They set `limit` to one and return only one trace if it exists. The options for `tr:traceback/2` are the same as for `tr:traceback/2` except `limit` and `format`. Additionally, it is possible to pass a [`tr`](https://hexdocs.pm/erlang_doctor/tr.html#t:tr/0) record (or an index) directly to `tr:traceback/1` to obtain the traceback for the provided trace event.
 
 ### Trace ranges for filtered traces: `ranges`
 
@@ -341,13 +356,13 @@ To get a list of traces between each matching call and the corresponding return,
       data = 1,ts = 1705475521750453,info = no_info}]]
 ```
 
-There is also `tr:ranges/2` - it accepts a map of options with the following keys:
+There is also `tr:ranges/2` - it accepts a [map of options](https://hexdocs.pm/erlang_doctor/tr.html#t:range_options/0), including:
 
 - `tab` is the table or list which is like the second argument of `tr:filter/2`,
 - `max_depth` is the maximum depth of nested calls. A message event also adds 1 to the depth.
     You can use `#{max_depth => 1}` to see only the top-level call and the corresponding return.
 
-There are two additional function: `tr:range/1` and `tr:range/2`, which return only one range if it exists. It is possible to pass a `tr` record or an index to `tr:range/1` as well.
+There are two additional function: `tr:range/1` and `tr:range/2`, which return only one range if it exists. It is possible to pass a [`tr`](https://hexdocs.pm/erlang_doctor/tr.html#t:tr/0) record or an index to `tr:range/1` as well.
 
 ### Calling function from a trace: `do`
 
@@ -410,7 +425,7 @@ You can use the provided function to do filtering as well:
 
 ### Sorted call statistics: `sorted_call_stat`
 
-You can sort the call stat by accumulated time, descending:
+You can sort the call stat by accumulated time (descending) with `tr:sorted_call_stat/1`:
 
 ```erlang
 21> tr:sorted_call_stat(fun(#tr{data = [N]}) -> N end).
@@ -434,7 +449,7 @@ ok
 
 ### Call tree statistics: `top_call_trees`
 
-This function makes it possible to detect complete call trees that repeat several times,
+The function `tr:top_call_trees/0` makes it possible to detect complete call trees that repeat several times,
 where corresponding function calls and returns have the same arguments and return values, respectively.
 When such functions take a lot of time and do not have useful side effects, they can be often optimized.
 
@@ -480,7 +495,7 @@ and `Count` is the number of times the tree repeated. The list is sorted by `Tim
 In the example above `fib(2)` was called twice and `fib(1)` was called 3 times,
 what already shows that the recursive implementation is suboptimal.
 
-There is also `tr:top_call_trees/1` that takes a map of options with the following keys:
+There is also `tr:top_call_trees/1`, which takes a [map of options](https://hexdocs.pm/erlang_doctor/tr.html#t:top_call_trees_options/0), including:
 - `output` is `reduced` by default, but it can be set to `complete` where subtrees of already listed trees are also listed.
 - `min_count` is the minimum number of times a tree has to occur to be listed, the default is 2.
 - `min_time` is the minimum accumulated time for a tree, by default there is no minimum.
