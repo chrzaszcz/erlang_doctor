@@ -99,8 +99,7 @@ single_pid_with_msg(_Config) ->
     [#tr{index = 1, event = recv, pid = Pid, data = {do_factorial, 0, Self}},
      #tr{index = 2, event = call, mfa = MFA, pid = Pid, data = [0]},
      #tr{index = 3, event = return, mfa = MFA, pid = Pid, data = 1},
-     #tr{index = 4, event = send, pid = Pid, data = {ok, 1},
-         info = #msg{to = Self, exists = true}}] = tr:select().
+     #tr{index = 4, event = send, pid = Pid, data = {ok, 1}, info = {Self, true}}] = tr:select().
 
 msg_after_traced_call(_Config) ->
     Pid = spawn_link(fun ?MODULE:async_factorial/0),
@@ -116,8 +115,7 @@ msg_after_traced_call(_Config) ->
     %% message traces for Pid are stored after the call to factorial/1
     [#tr{index = 1, event = call, mfa = MFA, pid = Pid, data = [0]},
      #tr{index = 2, event = return, mfa = MFA, pid = Pid, data = 1},
-     #tr{index = 3, event = send, pid = Pid, data = {ok, 1},
-         info = #msg{to = Self, exists = true}},
+     #tr{index = 3, event = send, pid = Pid, data = {ok, 1}, info = {Self, true}},
      #tr{index = 4, event = recv, pid = Pid, data = stop}] = tr:select().
 
 ranges(_Config) ->
@@ -520,11 +518,9 @@ trace_wait_and_reply() ->
     wait_for_traces(5),
     tr:stop_tracing(),
     [#tr{index = 1, pid = Pid, event = call, mfa = MFA, data = [Self]},
-     #tr{index = 2, pid = Pid, event = send, data = {started, Pid},
-         info = #msg{to = Self, exists = true}},
+     #tr{index = 2, pid = Pid, event = send, data = {started, Pid}, info = {Self, true}},
      #tr{index = 3, pid = Pid, event = recv, data = reply},
-     #tr{index = 4, pid = Pid, event = send, data = {finished, Pid},
-         info = #msg{to = Self, exists = true}},
+     #tr{index = 4, pid = Pid, event = send, data = {finished, Pid}, info = {Self, true}},
      #tr{index = 5, pid = Pid, event = return, mfa = MFA, data = {finished, Pid}}
     ] = tr:select().
 

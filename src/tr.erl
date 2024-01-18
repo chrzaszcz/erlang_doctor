@@ -1,3 +1,4 @@
+%% @doc Erlang Doctor API module.
 -module(tr).
 
 -behaviour(gen_server).
@@ -32,12 +33,11 @@
 
 %% API - utilities
 -export([contains_data/2,
-         call_selector/1,
          do/1,
          lookup/1,
          app_modules/1,
          mfarity/1,
-         mfa/2,
+         mfargs/2,
          ts/1]).
 
 %% gen_server callbacks
@@ -48,7 +48,7 @@
          terminate/2,
          code_change/3]).
 
--record(msg, {to :: pid(), exists :: boolean()}).
+-type recipient() :: {pid(), boolean()}. % Recipient pid with a boolean indicating if it exists.
 
 %% copied, not included from tr.hrl to make it self-contained
 -record(tr, {index :: index(),
@@ -57,75 +57,145 @@
              mfa = no_mfa :: mfa() | no_mfa,
              data :: term(),
              ts :: integer(),
-             info = no_info :: #msg{} | no_info}).
+             info = no_info :: recipient() | no_info}).
 
 -define(is_return(Event), (Event =:= return orelse Event =:= exception)).
 -define(is_msg(Event), (Event =:= send orelse Event =:= recv)).
 
 -type tr() :: #tr{}.
--type pred() :: fun((tr()) -> boolean()).
--type selector() :: fun((tr()) -> term()).
--type call_count() :: non_neg_integer().
--type acc_time() :: non_neg_integer().
--type own_time() :: non_neg_integer().
--type pids() :: [pid()] | all.
--type limit() :: pos_integer() | infinity. % used for a few different limits
--type index() :: pos_integer().
+%% Trace record, storing one collected trace event.
+%%
+%% Record fields:
+%% <ul>
+%%  <li>`index' - `t:index()'</li>
+%%  <li>`pid' - process in which the traced event occurred, `t:erlang:pid()'</li>
+%%  <li>`event' - `call', `return' or `exception' for function traces; `send' or `recv' for messages.</li>
+%%  <li>`mfa' - `t:erlang:mfa()' for function traces; `no_mfa' for messages.</li>
+%%  <li>`data' - Argument list (for calls), returned value (for returns) or class and value (for exceptions).</li>
+%%  <li>`ts' - Timestamp in microseconds.</li>
+%%  <li>`info' - For `send' events it is a `t:recipient()' tuple; otherwise `no_info'.</li>
+%% </ul>
 
--type init_options() :: #{tab => atom(),
-                          index => index(),
-                          limit => limit()}.
--type state() :: #{tab := atom(),
+-type pred() :: fun((tr()) -> boolean()).
+%% Predicate returning `true' for matching traces.
+%%
+%% For other traces it can return a different value or fail.
+
+-type selector(Data) :: fun((tr()) -> Data).
+%% Trace selector function.
+%%
+%% For selected traces, it returns `Data'. For other traces, it should fail.
+
+-type call_count() :: non_neg_integer(). % Total number of aggregated calls.
+-type acc_time() :: non_neg_integer(). % Total accumulated time.
+-type own_time() :: non_neg_integer(). % Total own time (without other called functions).
+-type pids() :: [pid()] | all. % A list of processes to trace. Default: `all'.
+-type limit() :: pos_integer() | infinity. % Maximum number of items.
+-type index() :: pos_integer(). % Unique, auto-incremented identifier of a `t:tr()' record.
+-type table() :: atom(). % ETS table name.
+-type mfargs() :: {module(), atom(), list()}. % Module, function and arguments.
+
+-type init_options() :: #{tab => table(), index => index(), limit => limit()}.
+%% Initialization options.
+%%
+%% `tab' is the ETS table used for storing traces (default: `trace').
+%% `index' is the index value of the first inserted trace (default: 1).
+%% When size of `tab' reaches the optional `limit', tracing is stopped.
+
+-type state() :: #{tab := table(),
                    index := index(),
                    limit := limit(),
                    trace := none | trace_spec(),
                    traced_pids := traced_pids_tab()}.
+
 -type trace_spec() :: #{modules := module_spec(),
                         pids := pids(),
-                        msg := send | recv | all | none,
-                        msg_trigger := always | after_traced_call}.
+                        msg := message_event_types(),
+                        msg_trigger := msg_trigger()}.
 -type trace_options() :: #{modules => module_spec(),
                            pids => pids(),
-                           msg => send | recv | all | none,
-                           msg_trigger => always | after_traced_call}.
+                           msg => message_event_types(),
+                           msg_trigger => msg_trigger()}.
+%% Options for tracing.
+
+-type message_event_types() :: send | recv | all | none.
+%% Message event types to trace. Default: `none'.
+
+-type msg_trigger() :: after_traced_call | always.
+%% Condition checked before collecting message traces for a process.
+%%
+%% `after_traced_call' (default) means that a process needs to call at least one traced
+%% function before its message events start being collected.
+%% `always' means that messages for all traced processes are collected.
+
 -type module_spec() :: [module() | mfa()].
+%% Specifies traced modules and/or individual functions. Default: `[]'.
+
 -type erlang_trace_flags() :: [call | timestamp | send | 'receive'].
 -type traced_pids_tab() :: none | ets:table().
 
--type range_options() :: #{tab => atom() | [tr()],
-                           max_depth => limit()}.
+-type tr_source() :: table() | [tr()].
+%% Source of traces: an ETS table or a list of traces. Default: `tab()'.
 
--type tb_options() :: #{tab => atom() | [tr()],
+-type range_options() :: #{tab => tr_source(),
+                           max_depth => limit()}.
+%% Options for trace ranges.
+%%
+%% Optional `limit' is the maximum depth of calls in the returned ranges.
+%% All traces (including messages) exceeding that depth are skipped.
+
+-type tb_options() :: #{tab => tr_source(),
                         output => tb_output(),
                         format => tb_format(),
                         order => tb_order(),
                         limit => limit()}.
+%% Traceback options.
+%%
+%% Optional `limit' is the maximum number of tracebacks to collect
+%% before filtering them according to `output'.
+
 -type tb_output() :: shortest | longest | all.
+%% Which tracebacks to return if they overlap. Default: `shortest'.
+
 -type tb_format() :: tree | list.
+%% Merge tracebacks into a `tree' or return a `list' (default) of them.
+
 -type tb_order() :: top_down | bottom_up.
+%% Order of calls in each returned traceback. Default: `top_down'.
+
 -type tb_tree() :: [tr() | {tr(), tb_tree()}].
+%% Multiple tracebacks merged into a tree structure.
+
 -type tb_acc_tree() :: [{tr(), tb_acc_tree()}].
 -type tb_acc_list() :: [[tr()]].
 -type tb_acc() :: tb_acc_tree() | tb_acc_list().
 
 -type call() :: {call, {module(), atom(), list()}}.
--type result() :: {return | exception, any()}.
+-type result() :: {return | exception, any()}. % Result of a function call.
 -type simple_tr() :: call() | result().
 
--type call_tree_stat_options() :: #{tab => atom()}.
+-type call_tree_stat_options() :: #{tab => table()}.
 -type call_tree_stat_state() :: #{pid_states := map(), tab := ets:tid()}.
 
 -type pid_call_state() :: [tree() | call()].
 
 -type top_call_trees_output() :: reduced | complete.
+%% Specifies the behaviour for overlapping call trees.
+%%
+%% `reduced' (default) hides subtrees, while `complete' keeps them.
 
 -type top_call_trees_options() :: #{max_size => pos_integer(),
-                                    min_count => count(),
-                                    min_time => time_diff(),
+                                    min_count => call_tree_count(),
+                                    min_time => acc_time(),
                                     output => top_call_trees_output()}.
+%% Options for repeated call tree statistics.
+%%
+%% `min_time' is an optional minimum accumulated time of a tree.
+%% `min_count' (default: 2) specifies minimum number of repetitions of a tree.
+%% `max_size' (default: 10) specifies maximum number of listed call trees.
 
--type time_diff() :: integer().
--type count() :: pos_integer().
+-type time_diff() :: integer(). % To
+-type call_tree_count() :: pos_integer(). % Number of occurrences of a given call tree.
 
 -record(node, {module :: module(),
                function :: atom(),
@@ -134,40 +204,65 @@
                result :: result()}).
 
 -type tree() :: #node{}.
+%% Function call tree node.
+%%
+%% Record fields:
+%% <ul>
+%%  <li>`module' - module name</li>
+%%  <li>`function' - function name</li>
+%%  <li>`args' - argument list</li>
+%%  <li>`children' - a list of child nodes, each of them being `t:tree()'</li>
+%%  <li>`result' - return value or exception, `t:result()'</li>
+%% </ul>
 
--type tree_item() :: {time_diff(), count(), tree()}.
+-type tree_item() :: {acc_time(), call_tree_count(), tree()}.
+%% Function call tree with its accumulated time and number of repetitions.
 
 -export_type([tr/0, index/0]).
 
 %% API - capturing, data manipulation
 
+%% @doc Starts `tr' as part of a supervision tree.
+%% @see start/1
 -spec start_link() -> {ok, pid()}.
 start_link() ->
     start_link(#{}).
 
+%% @doc Start `tr' as part of a supervision tree.
+%% @see start/1
 -spec start_link(init_options()) -> {ok, pid()}.
 start_link(Opts) ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, Opts, []).
 
+%% @doc Starts `tr' as a stand-alone `gen_server'. Intended for interactive use.
+%% @see start/1
 -spec start() -> {ok, pid()}.
 start() ->
     start(#{}).
 
+%% @doc Starts `tr' as a stand-alone `gen_server'. Intended for interactive use.
+%%
+%% You can override the selected `Opts'.
 -spec start(init_options()) -> {ok, pid()}.
 start(Opts) ->
     gen_server:start({local, ?MODULE}, ?MODULE, Opts, []).
 
 -define(is_trace(Tr), element(1, (Tr)) =:= trace orelse element(1, (Tr)) =:= trace_ts).
 
--spec trace_app(atom()) -> ok.
+%% @doc Starts tracing of all modules in an application.
+-spec trace_app(atom()) -> ok | {error, already_tracing}.
 trace_app(App) ->
     trace_apps([App]).
 
--spec trace_apps([atom()]) -> ok.
+%% @doc Starts tracing of all modules in all provided applications.
+-spec trace_apps([atom()]) -> ok | {error, already_tracing}.
 trace_apps(Apps) ->
     trace(lists:flatmap(fun app_modules/1, Apps)).
 
--spec trace(module_spec() | trace_options()) -> ok.
+%% @doc Starts tracing of the specified functions/modules and/or message events.
+%%
+%% You can either provide a list of modules/functions or a more generic map of options.
+-spec trace(module_spec() | trace_options()) -> ok | {error, already_tracing}.
 trace(Modules) when is_list(Modules) ->
     trace(#{modules => Modules});
 trace(Opts) ->
@@ -175,81 +270,118 @@ trace(Opts) ->
                     msg => none, msg_trigger => after_traced_call},
     gen_server:call(?MODULE, {start_trace, call, maps:merge(DefaultOpts, Opts)}).
 
--spec trace(module_spec(), pids()) -> ok.
+%% @doc Starts tracing of the specified functions/modules in specific processes.
+-spec trace(module_spec(), pids()) -> ok | {error, already_tracing}.
 trace(Modules, Pids) ->
     trace(#{modules => Modules, pids => Pids}).
 
--spec stop_tracing() -> ok.
+%% @doc Stops tracing, disabling all trace specs.
+%%
+%% Any future messages from the Erlang tracer will be ignored.
+-spec stop_tracing() -> ok | {error, not_tracing}.
 stop_tracing() ->
     gen_server:call(?MODULE, {stop_trace, call}).
 
+%% @doc Stops the whole `tr' server process.
 -spec stop() -> ok.
 stop() ->
     gen_server:stop(?MODULE).
 
--spec tab() -> atom().
+%% @doc Returns the name of the current ETS trace table in use.
+-spec tab() -> table().
 tab() ->
     gen_server:call(?MODULE, get_tab).
 
--spec set_tab(atom()) -> ok.
+%% @doc Sets a new ETS table for collecting traces, creating it if it doesn't exist.
+-spec set_tab(table()) -> ok.
 set_tab(Tab) ->
     gen_server:call(?MODULE, {set_tab, Tab}).
 
--spec load(string()) -> {ok, atom()} | {error, any()}.
-load(File) ->
+%% @doc Loads an ETS trace table from a file, and makes it the current table.
+%%
+%% Fails if the table already exists.
+-spec load(file:name_all()) -> {ok, table()} | {error, any()}.
+load(File) when is_binary(File) ->
+    load(binary_to_list(File));
+load(File) when is_list(File) ->
     gen_server:call(?MODULE, {load, File}).
 
--spec dump(string()) -> ok | {error, any()}.
-dump(File) ->
+%% @doc Dumps the `tab()' table to a file.
+-spec dump(file:name_all()) -> ok | {error, any()}.
+dump(File) when is_binary(File) ->
+    dump(binary_to_list(File));
+dump(File) when is_list(File) ->
     gen_server:call(?MODULE, {dump, File}, timer:minutes(2)).
 
+%% @doc Removes all traces from the current ETS table.
 -spec clean() -> ok.
 clean() ->
     gen_server:call(?MODULE, clean).
 
 %% API - analysis
 
+%% @doc Returns a list of all collected traces from `tab()'.
 -spec select() -> [tr()].
 select() ->
     ets:tab2list(tab()).
 
--spec select(selector()) -> [term()].
+%% @doc Selects data from matching traces from `tab()' with `ets:fun2ms(F)'.
+-spec select(selector(Data)) -> [Data].
 select(F) ->
     ets:select(tab(), ets:fun2ms(F)).
 
--spec select(selector(), term()) -> [term()].
+%% @doc Selects data from matching traces from `tab()' with `ets:fun2ms(F)'.
+%%
+%% Additionally, the selected traces have to contain `DataVal' in `#tr.data'.
+%% `DataVal' can occur in (possibly nested) tuples, maps or lists.
+-spec select(selector(Data), term()) -> [Data].
 select(F, DataVal) ->
     MS = ets:fun2ms(F),
     SelectRes = ets:select(tab(), MS, 1000),
     select(MS, DataVal, [], SelectRes).
 
+%% @doc Returns matching traces from `tab()'.
 -spec filter(pred()) -> [tr()].
 filter(F) ->
     filter(F, tab()).
 
--spec filter(pred(), atom() | [tr()]) -> [tr()].
+%% @doc Returns matching traces from a table or a list.
+-spec filter(pred(), tr_source()) -> [tr()].
 filter(F, Tab) ->
     Traces = foldl(fun(Tr, State) -> filter_trace(F, Tr, State) end, [], Tab),
     lists:reverse(Traces).
 
--spec traceback(pred() | tr() | index()) -> [tr()].
+%% @doc Returns traceback of the first matching trace from a table or a list.
+%%
+%% Matching can be done with a predicate function, an index value or a `tr' record.
+%% Fails if no trace is matched.
+%%
+%% @see traceback/2
+-spec traceback(pred() | index() | tr()) -> [tr()].
+traceback(PredF) when is_function(PredF, 1) ->
+    traceback(PredF, #{});
 traceback(Index) when is_integer(Index) ->
     traceback(fun(#tr{index = I}) -> Index =:= I end);
 traceback(T = #tr{}) ->
-    traceback(fun(Tr) -> Tr =:= T end);
-traceback(PredF) ->
-    traceback(PredF, #{}).
+    traceback(fun(Tr) -> Tr =:= T end).
 
+%% @doc Returns traceback of the first matching trace from a table or a list.
+%%
+%% Fails if no trace is matched.
+%% The options `limit' and `format' do not apply.
 -spec traceback(pred(), tb_options()) -> [tr()].
 traceback(PredF, Options) ->
     [TB] = tracebacks(PredF, Options#{limit => 1, format => list}),
     TB.
 
-%% Returns tracebacks: [CallN, ..., Call1] when PredF(CallN)
+%% @doc Returns tracebacks of all matching traces from `tab()'.
+%%
+%% @see tracebacks/2
 -spec tracebacks(pred()) -> [[tr()]] | tb_tree().
 tracebacks(PredF) ->
     tracebacks(PredF, #{}).
 
+%% @doc Returns tracebacks of all matching traces from a table or a list.
 -spec tracebacks(pred(), tb_options()) -> [[tr()]] | tb_tree().
 tracebacks(PredF, Options) when is_map(Options) ->
     Tab = maps:get(tab, Options, tab()),
@@ -263,22 +395,37 @@ tracebacks(PredF, Options) when is_map(Options) ->
         foldl(fun(T, State) -> tb_step(PredF, T, State) end, InitialState, Tab),
     finalize_tracebacks(TBs, Output, Format, Options).
 
--spec range(pred() | tr() | index()) -> [tr()].
+%% @doc Returns a lists of traces from `tab()' between the first matched call and the corresponding return.
+%%
+%% Matching can be done with a predicate function, an index value or a `t:tr()' record.
+%% Fails if no trace is matched.
+%%
+%% @see range/2
+-spec range(pred() | index() | tr()) -> [tr()].
+range(PredF) when is_function(PredF, 1) ->
+    range(PredF, #{});
 range(Index) when is_integer(Index) ->
     range(fun(#tr{index = I}) -> Index =:= I end);
 range(T = #tr{}) ->
-    range(fun(Tr) -> Tr =:= T end);
-range(PredF) ->
-    range(PredF, #{}).
+    range(fun(Tr) -> Tr =:= T end).
 
+%% @doc Returns a lists of traces from a table or a list
+%% between the first matched call and corresponding return.
+%%
+%% Fails if no call is matched.
+-spec range(pred(), range_options()) -> [tr()].
 range(PredF, Options) ->
     hd(ranges(PredF, Options)).
 
-%% Returns ranges (trace sections for the given Pid): [Call, ..., Return] when PredF(Call)
+%% @doc Returns lists of traces from `tab()' between matched calls and corresponding returns.
+%%
+%% @see ranges/2
 -spec ranges(pred()) -> [[tr()]].
 ranges(PredF) ->
     ranges(PredF, #{}).
 
+%% @doc Returns lists of traces from a table or a list
+%% between matched calls and its corresponding returns.
 -spec ranges(pred(), range_options()) -> [[tr()]].
 ranges(PredF, Options) when is_map(Options) ->
     Tab = maps:get(tab, Options, tab()),
@@ -286,66 +433,77 @@ ranges(PredF, Options) when is_map(Options) ->
     #{traces := Traces} = foldl(fun(T, S) -> range_step(PredF, T, S) end, InitialState, Tab),
     lists:reverse(Traces).
 
--spec print_sorted_call_stat(selector(), pos_integer()) -> ok.
-print_sorted_call_stat(KeyF, Length) ->
-    pretty_print_tuple_list(sorted_call_stat(KeyF), Length).
+%% @doc Prints sorted call time statistics for the selected traces from `tab()'.
+%%
+%% The statistics are sorted according to `acc_time()', descending.
+%% Only top `Limit' rows are printed.
+%% @see call_stat/1
+-spec print_sorted_call_stat(selector(_), limit()) -> ok.
+print_sorted_call_stat(KeyF, Limit) ->
+    pretty_print_tuple_list(sorted_call_stat(KeyF), Limit).
 
--spec sorted_call_stat(selector()) -> [{term(), call_count(), acc_time(), own_time()}].
+%% @doc Returns sorted call time statistics for the selected traces from `tab()'.
+%%
+%% The statistics are sorted according to `acc_time()', descending.
+%% @see call_stat/1
+-spec sorted_call_stat(selector(Key)) -> [{Key, call_count(), acc_time(), own_time()}].
 sorted_call_stat(KeyF) ->
     lists:reverse(sort_by_time(call_stat(KeyF))).
 
--spec call_stat(selector()) -> #{term() => {call_count(), acc_time(), own_time()}}.
+%% @doc Returns call time statistics for traces selected from `tab()'.
+%%
+%% @see call_stat/2
+-spec call_stat(selector(Key)) -> #{Key => {call_count(), acc_time(), own_time()}}.
 call_stat(KeyF) ->
     call_stat(KeyF, tab()).
 
--spec call_stat(selector(), atom() | [tr()]) -> #{term() => {call_count(), acc_time(), own_time()}}.
+%% @doc Returns call time statistics for traces selected from a table or a list.
+%%
+%% Calls are aggregated by `Key' returned by `KeyF'.
+-spec call_stat(selector(Key), tr_source()) -> #{Key => {call_count(), acc_time(), own_time()}}.
 call_stat(KeyF, Tab) ->
     {#{}, State} = foldl(fun(Tr, State) -> call_stat_step(KeyF, Tr, State) end, {#{}, #{}}, Tab),
     State.
 
 %% API - utilities
 
+%% @doc Looks for `DataVal' in `#tr.data'.
+%%
+%% `DataVal' can occur in (possibly nested) tuples, maps or lists.
 -spec contains_data(term(), tr()) -> boolean().
 contains_data(DataVal, #tr{data = Data}) ->
     contains_val(DataVal, Data).
 
--spec call_selector(fun((pid(), {atom(), atom(), [term()]}) -> term())) -> selector().
-call_selector(F) ->
-    fun(#tr{event = call, pid = Pid, mfa = MFArity, data = Args}) ->
-            MFA = mfa(MFArity, Args),
-            F(Pid, MFA)
-    end.
-
+%% @doc Executes the function call for the provided `t:tr()' record or index.
 -spec do(tr()) -> term().
 do(Index) when is_integer(Index) ->
     do(lookup(Index));
 do(#tr{event = call, mfa = {M, F, Arity}, data = Args}) when length(Args) =:= Arity ->
     apply(M, F, Args).
 
+%% @doc Returns the `t:tr()' record from `tab()' for an index.
 -spec lookup(index()) -> tr().
 lookup(Index) when is_integer(Index) ->
     [T] = ets:lookup(tab(), Index),
     T.
 
--spec app_modules(atom()) -> [atom()].
+%% @doc Returns all module names for an application.
+-spec app_modules(atom()) -> [module()].
 app_modules(AppName) ->
     Path = code:lib_dir(AppName, ebin),
     {ok, FileNames} = file:list_dir(Path),
     BeamFileNames = lists:filter(fun(Name) -> filename:extension(Name) =:= ".beam" end, FileNames),
     [list_to_atom(filename:rootname(Name)) || Name <- BeamFileNames].
 
--spec mfarity({M, F, Arity | Args}) -> {M, F, Arity} when M :: atom(),
-                                                          F :: atom(),
-                                                          Arity :: arity(),
-                                                          Args :: list().
+%% @doc Replaces arguments with arity in an MFA tuple.
+-spec mfarity(mfa() | mfargs()) -> mfa().
 mfarity({M, F, A}) -> {M, F, maybe_length(A)}.
 
--spec mfa({M, F, Arity}, Args) -> {M, F, Args} when M :: atom(),
-                                                    F :: atom(),
-                                                    Arity :: arity(),
-                                                    Args :: list().
-mfa({M, F, Arity}, Args) when length(Args) =:= Arity -> {M, F, Args}.
+%% @doc Replaces arity with `Args' in an MFA tuple.
+-spec mfargs(mfa(), list()) -> mfargs().
+mfargs({M, F, Arity}, Args) when length(Args) =:= Arity -> {M, F, Args}.
 
+%% @doc Returns human-readable timestamp according to RFC 3339.
 -spec ts(tr()) -> string().
 ts(#tr{ts = TS}) -> calendar:system_time_to_rfc3339(TS, [{unit, microsecond}]).
 
@@ -353,18 +511,19 @@ ts(#tr{ts = TS}) -> calendar:system_time_to_rfc3339(TS, [{unit, microsecond}]).
 
 -spec init(init_options()) -> {ok, state()}.
 init(Opts) ->
-    DefaultState = #{tab => default_tab(),
-                     index => initial_index(),
-                     limit => infinity,
-                     trace => none,
-                     traced_pids => none},
-    State = #{tab := Tab} = maps:merge(DefaultState, Opts),
+    Defaults = #{tab => default_tab(), index => initial_index(), limit => infinity},
+    FinalOpts = #{tab := Tab} = maps:merge(Defaults, Opts),
+    State = maps:merge(FinalOpts, #{trace => none, traced_pids => none}),
     create_tab(Tab),
-    {ok, maps:merge(State, Opts)}.
+    {ok, State}.
 
--spec handle_call(any(), {pid(), any()}, state()) -> {reply, ok, state()}.
+-spec handle_call(any(), {pid(), any()}, state()) -> {reply, ok | {error, atom()}, state()}.
 handle_call({start_trace, call, Spec}, _From, State = #{trace := none}) ->
     {reply, ok, start_trace(State, Spec)};
+handle_call({start_trace, call, _Spec}, _From, State = #{trace := #{}}) ->
+    {reply, {error, already_tracing}, State};
+handle_call({stop_trace, call}, _From, State = #{trace := none}) ->
+    {reply, {error, not_tracing}, State};
 handle_call({stop_trace, call}, _From, State = #{trace := #{}}) ->
     {reply, ok, stop_trace(State)};
 handle_call(clean, _From, State = #{tab := Tab}) ->
@@ -383,7 +542,10 @@ handle_call({load, File}, _From, State) ->
 handle_call(get_tab, _From, State = #{tab := Tab}) ->
     {reply, Tab, State};
 handle_call({set_tab, NewTab}, _From, State) ->
-    create_tab(NewTab),
+    case ets:info(NewTab) of
+        undefined -> create_tab(NewTab);
+        [_|_] -> ok
+    end,
     {reply, ok, State#{tab := NewTab, index := index(NewTab)}};
 handle_call(Req, From, State) ->
     logger:error("Unexpected call ~p from ~p.", [Req, From]),
@@ -554,7 +716,7 @@ handle_trace(Trace, State) ->
     State.
 
 handle_send_trace(Pid, Event, Msg, To, TS, #{tab := Tab, index := I} = State) ->
-    Info = #msg{to = To, exists = Event =:= send},
+    Info = {To, Event =:= send},
     ets:insert(Tab, #tr{index = I, pid = Pid, event = send, data = Msg,
                         ts = usec_from_now(TS), info = Info}),
     State#{index := I + 1}.
@@ -772,10 +934,12 @@ own_time_key(_, _, #tr{}, _) -> no_key.
 
 %% Call tree statistics for redundancy check
 
+%% @private
 -spec call_tree_stat() -> ets:tid().
 call_tree_stat() ->
     call_tree_stat(#{}).
 
+%% @private
 -spec call_tree_stat(call_tree_stat_options()) -> ets:tid().
 call_tree_stat(Options) when is_map(Options) ->
     TraceTab = maps:get(tab, Options, tab()),
@@ -802,7 +966,7 @@ call_tree_stat_step(Tr = #tr{pid = Pid, ts = TS}, State = #{pid_states := PidSta
 
 -spec simplify_trace_item(tr()) -> simple_tr().
 simplify_trace_item(#tr{event = call, mfa = MFA, data = Args}) ->
-    {call, mfa(MFA, Args)};
+    {call, mfargs(MFA, Args)};
 simplify_trace_item(#tr{event = return, data = Value}) ->
     {return, Value};
 simplify_trace_item(#tr{event = exception, data = Value}) ->
@@ -841,7 +1005,7 @@ reduce_tree_item({_, Count, #node{children = Children}}, TreeTab) ->
     [reduce_subtree(Child, Count, TreeTab) || Child <- Children],
     TreeTab.
 
--spec reduce_subtree(tree(), count(), ets:tid()) -> any().
+-spec reduce_subtree(tree(), call_tree_count(), ets:tid()) -> any().
 reduce_subtree(Node, Count, TreeTab) ->
     case ets:lookup(TreeTab, Node) of
         [{_, Count, _} = Item] ->
@@ -853,11 +1017,19 @@ reduce_subtree(Node, Count, TreeTab) ->
             already_deleted
     end.
 
+%% @doc Returns statistics of repeated function call trees that took most time.
+%%
+%% @see top_call_trees/1
 -spec top_call_trees() -> [tree_item()].
 top_call_trees() ->
     top_call_trees(#{}).
 
--spec top_call_trees(top_call_trees_options() | ets:tid()) -> [tree_item()].
+%% @doc Returns statistics of repeated function call trees that took most time.
+%%
+%% Two call trees repeat if they contain the same function calls and returns
+%% in the same order taking the same arguments and returning the same values, respectively.
+%% The results are sorted according to accumulated time.
+-spec top_call_trees(top_call_trees_options()) -> [tree_item()].
 top_call_trees(Options) when is_map(Options) ->
     TreeTab = call_tree_stat(),
     case maps:get(output, Options, reduced) of
@@ -866,10 +1038,9 @@ top_call_trees(Options) when is_map(Options) ->
     end,
     TopTrees = top_call_trees(TreeTab, Options),
     ets:delete(TreeTab),
-    TopTrees;
-top_call_trees(TreeTab) ->
-    top_call_trees(TreeTab, #{}).
+    TopTrees.
 
+%% @private
 -spec top_call_trees(ets:tid(), top_call_trees_options()) -> [tree_item()].
 top_call_trees(TreeTab, Options) ->
     MaxSize = maps:get(max_size, Options, 10),
