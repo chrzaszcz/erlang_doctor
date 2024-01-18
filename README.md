@@ -124,9 +124,7 @@ They are stored as `#tr` records with the following fields:
 - `mfa`: `{Module, Function, Arity}` for function traces; `no_mfa` for messages.
 - `data`: argument list (for calls), returned value (for returns) or class and value (for exceptions).
 - `timestamp` in microseconds.
-- `info`: For function traces and `recv` events it is `no_info`. For `send` events it is a `#msg` record with the following fields:
-    - `to`: message recipient (pid),
-    - `exists`: boolean, indicates if the recipient process existed.
+- `info`: For function traces and `recv` events it is `no_info`. For `send` events it is a `{To, Exists}` tuple, where `To` is the recipient pid, and `Exists` is a boolean indicating if the recipient process existed.
 
 It's useful to read the record definitions before trace analysis:
 
