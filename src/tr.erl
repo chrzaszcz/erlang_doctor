@@ -194,7 +194,6 @@
 %% `min_count' (default: 2) specifies minimum number of repetitions of a tree.
 %% `max_size' (default: 10) specifies maximum number of listed call trees.
 
--type time_diff() :: integer(). % To
 -type call_tree_count() :: pos_integer(). % Number of occurrences of a given call tree.
 
 -record(node, {module :: module(),
@@ -345,13 +344,13 @@ select(F, DataVal) ->
 filter(F) ->
     filter(F, tab()).
 
-%% @doc Returns matching traces from a table or a list.
+%% @doc Returns matching traces from `t:tr_source()'.
 -spec filter(pred(), tr_source()) -> [tr()].
 filter(F, Tab) ->
     Traces = foldl(fun(Tr, State) -> filter_trace(F, Tr, State) end, [], Tab),
     lists:reverse(Traces).
 
-%% @doc Returns traceback of the first matching trace from a table or a list.
+%% @doc Returns traceback of the first matching trace from `t:tr_source()'.
 %%
 %% Matching can be done with a predicate function, an index value or a `tr' record.
 %% Fails if no trace is matched.
@@ -365,7 +364,7 @@ traceback(Index) when is_integer(Index) ->
 traceback(T = #tr{}) ->
     traceback(fun(Tr) -> Tr =:= T end).
 
-%% @doc Returns traceback of the first matching trace from a table or a list.
+%% @doc Returns traceback of the first matching trace from `t:tr_source()'.
 %%
 %% Fails if no trace is matched.
 %% The options `limit' and `format' do not apply.
@@ -381,7 +380,7 @@ traceback(PredF, Options) ->
 tracebacks(PredF) ->
     tracebacks(PredF, #{}).
 
-%% @doc Returns tracebacks of all matching traces from a table or a list.
+%% @doc Returns tracebacks of all matching traces from `t:tr_source()'.
 -spec tracebacks(pred(), tb_options()) -> [[tr()]] | tb_tree().
 tracebacks(PredF, Options) when is_map(Options) ->
     Tab = maps:get(tab, Options, tab()),
@@ -395,7 +394,7 @@ tracebacks(PredF, Options) when is_map(Options) ->
         foldl(fun(T, State) -> tb_step(PredF, T, State) end, InitialState, Tab),
     finalize_tracebacks(TBs, Output, Format, Options).
 
-%% @doc Returns a lists of traces from `tab()' between the first matched call and the corresponding return.
+%% @doc Returns a list of traces from `tab()' between the first matched call and the corresponding return.
 %%
 %% Matching can be done with a predicate function, an index value or a `t:tr()' record.
 %% Fails if no trace is matched.
@@ -409,8 +408,7 @@ range(Index) when is_integer(Index) ->
 range(T = #tr{}) ->
     range(fun(Tr) -> Tr =:= T end).
 
-%% @doc Returns a lists of traces from a table or a list
-%% between the first matched call and corresponding return.
+%% @doc Returns a list of traces from `t:tr_source()' between the first matched call and the corresponding return.
 %%
 %% Fails if no call is matched.
 -spec range(pred(), range_options()) -> [tr()].
@@ -424,8 +422,7 @@ range(PredF, Options) ->
 ranges(PredF) ->
     ranges(PredF, #{}).
 
-%% @doc Returns lists of traces from a table or a list
-%% between matched calls and its corresponding returns.
+%% @doc Returns lists of traces from `t:tr_source()' between matched calls and corresponding returns.
 -spec ranges(pred(), range_options()) -> [[tr()]].
 ranges(PredF, Options) when is_map(Options) ->
     Tab = maps:get(tab, Options, tab()),
@@ -435,16 +432,16 @@ ranges(PredF, Options) when is_map(Options) ->
 
 %% @doc Prints sorted call time statistics for the selected traces from `tab()'.
 %%
-%% The statistics are sorted according to `acc_time()', descending.
+%% The statistics are sorted according to `t:acc_time()', descending.
 %% Only top `Limit' rows are printed.
-%% @see call_stat/1
+%% @see sorted_call_stat/1
 -spec print_sorted_call_stat(selector(_), limit()) -> ok.
 print_sorted_call_stat(KeyF, Limit) ->
     pretty_print_tuple_list(sorted_call_stat(KeyF), Limit).
 
 %% @doc Returns sorted call time statistics for the selected traces from `tab()'.
 %%
-%% The statistics are sorted according to `acc_time()', descending.
+%% The statistics are sorted according to `t:acc_time()', descending.
 %% @see call_stat/1
 -spec sorted_call_stat(selector(Key)) -> [{Key, call_count(), acc_time(), own_time()}].
 sorted_call_stat(KeyF) ->
@@ -457,7 +454,7 @@ sorted_call_stat(KeyF) ->
 call_stat(KeyF) ->
     call_stat(KeyF, tab()).
 
-%% @doc Returns call time statistics for traces selected from a table or a list.
+%% @doc Returns call time statistics for traces selected from `t:tr_source()'.
 %%
 %% Calls are aggregated by `Key' returned by `KeyF'.
 -spec call_stat(selector(Key), tr_source()) -> #{Key => {call_count(), acc_time(), own_time()}}.
@@ -509,6 +506,7 @@ ts(#tr{ts = TS}) -> calendar:system_time_to_rfc3339(TS, [{unit, microsecond}]).
 
 %% gen_server callbacks
 
+%% @private
 -spec init(init_options()) -> {ok, state()}.
 init(Opts) ->
     Defaults = #{tab => default_tab(), index => initial_index(), limit => infinity},
@@ -517,6 +515,7 @@ init(Opts) ->
     create_tab(Tab),
     {ok, State}.
 
+%% @private
 -spec handle_call(any(), {pid(), any()}, state()) -> {reply, ok | {error, atom()}, state()}.
 handle_call({start_trace, call, Spec}, _From, State = #{trace := none}) ->
     {reply, ok, start_trace(State, Spec)};
@@ -551,11 +550,13 @@ handle_call(Req, From, State) ->
     logger:error("Unexpected call ~p from ~p.", [Req, From]),
     {reply, ok, State}.
 
+%% @private
 -spec handle_cast(any(), state()) -> {noreply, state()}.
 handle_cast(Msg, State) ->
     logger:error("Unexpected message ~p.", [Msg]),
     {noreply, State}.
 
+%% @private
 -spec handle_info(any(), state()) -> {noreply, state()}.
 handle_info(Trace, State = #{trace := none}) when ?is_trace(Trace) ->
     {noreply, State};
@@ -568,10 +569,12 @@ handle_info(Msg, State) ->
     logger:error("Unexpected message ~p.", [Msg]),
     {noreply, State}.
 
+%% @private
 -spec terminate(any(), state()) -> ok.
 terminate(_Reason, #{}) ->
     ok.
 
+%% @private
 -spec code_change(any(), state(), any()) -> {ok, state()}.
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
@@ -988,7 +991,7 @@ build_node([{Call, CallTS} | State], Node) ->
     FinalNode = Node#node{module = M, function = F, args = Args},
     {CallTS, [FinalNode | State]}.
 
--spec insert_call_tree(tree(), time_diff(), ets:tid()) -> true.
+-spec insert_call_tree(tree(), acc_time(), ets:tid()) -> true.
 insert_call_tree(CallTree, Time, TreeTab) ->
     TreeItem = case ets:lookup(TreeTab, CallTree) of
                 [] -> {Time, 1, CallTree};
