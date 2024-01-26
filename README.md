@@ -4,9 +4,10 @@
 [![Hex Docs](https://img.shields.io/badge/hex-docs-yellow.svg)](https://hexdocs.pm/erlang_doctor/)
 [![GitHub Actions](https://github.com/chrzaszcz/erlang_doctor/actions/workflows/test.yml/badge.svg)](https://github.com/chrzaszcz/erlang_doctor/actions)
 
-Lightweight tracing, debugging and profiling tool, that collects traces from your system in an ETS table, putting minimal impact on the system.
+Lightweight tracing, debugging and profiling tool, which collects traces in an ETS table, putting minimal impact on your system.
 After collecting the traces, you can query and analyse them.
 By separating data collection from analysis, this tool helps you limit unnecessary repetition and guesswork.
+There is [ExDoctor](https://hex.pm/packages/ex_doctor) for Elixir as well.
 
 ## Quick start
 

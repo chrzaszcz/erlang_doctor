@@ -1,6 +1,6 @@
 {application, erlang_doctor,
  [{description, "Lightweight tracing, debugging and profiling utility for Erlang"},
-  {vsn, "0.2.4"},
+  {vsn, "0.2.5"},
   {registered, []},
   {mod, { erlang_doctor_app, []}},
   {applications,

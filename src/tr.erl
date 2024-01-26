@@ -217,7 +217,7 @@
 -type tree_item() :: {acc_time(), call_tree_count(), tree()}.
 %% Function call tree with its accumulated time and number of repetitions.
 
--export_type([tr/0, index/0]).
+-export_type([tr/0, index/0, recipient/0]).
 
 %% API - capturing, data manipulation
 
