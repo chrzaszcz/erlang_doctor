@@ -508,7 +508,9 @@ ts(#tr{ts = TS}) -> calendar:system_time_to_rfc3339(TS, [{unit, microsecond}]).
 -spec init(init_options()) -> {ok, state()}.
 init(Opts) ->
     process_flag(trap_exit, true),
-    Defaults = #{tab => default_tab(), index => initial_index(), limit => infinity},
+    Defaults = #{tab => default_tab(),
+                 index => initial_index(),
+                 limit => application:get_env(erlang_doctor, limit, infinity)},
     FinalOpts = #{tab := Tab} = maps:merge(Defaults, Opts),
     State = maps:merge(FinalOpts, #{trace => none, tracer_pid => none}),
     create_tab(Tab),
