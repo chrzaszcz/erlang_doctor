@@ -6,10 +6,25 @@
 
 -import(tr_helper, [wait_for_traces/1]).
 
+expect_log(Level, Regexp) ->
+    receive
+        {Level, Log} ->
+            case re:run(Log, Regexp) of
+                nomatch ->
+                    ct:pal("Skipping unexpected log message (~p): ~p", [Level, Log]),
+                    expect_log(Level, Regexp);
+                {match, _} ->
+                    ok
+            end
+    after 5000 ->
+            ct:fail("Expected log message not received")
+    end.
+
 %% CT callbacks
 
 all() ->
-    [{group, trace},
+    [{group, start_stop},
+     {group, trace},
      {group, range},
      {group, traceback},
      {group, util},
@@ -20,7 +35,10 @@ suite() ->
     [{timetrap, {seconds, 30}}].
 
 groups() ->
-    [{trace, [single_pid,
+    [{start_stop, [limit,
+                   stop_while_tracing,
+                   duplicates]},
+     {trace, [single_pid,
               single_pid_with_msg,
               msg_after_traced_call]},
      {range, [ranges,
@@ -51,22 +69,76 @@ groups() ->
      {call_tree_stat, [top_call_trees,
                        top_call_trees_with_messages]}].
 
-init_per_suite(Config) ->
+init_per_group(start_stop, Config) ->
+    Config;
+init_per_group(_Group, Config) ->
     ok = application:start(erlang_doctor),
     Config.
 
-end_per_suite(Config) ->
-    ok = application:stop(erlang_doctor),
-    Config.
+end_per_group(start_stop, _Config) ->
+    ok;
+end_per_group(_Group, _Config) ->
+    ok = application:stop(erlang_doctor).
 
 init_per_testcase(_TC, Config) ->
+    logger:add_handler(?MODULE, ?MODULE, #{config => self()}),
     Config.
 
 end_per_testcase(_TC, _Config) ->
-    catch tr:stop_tracing(), % cleanup in case of failed tests
-    tr:clean().
+    logger:remove_handler(?MODULE),
+    case lists:keymember(erlang_doctor, 1, application:which_applications()) of
+        false ->
+            catch tr:stop(); % cleanup in case of failed tests
+        true ->
+            catch tr:stop_tracing(), % cleanup in case of failed tests
+            tr:clean()
+    end.
 
 %% Test cases
+
+limit(_Config) ->
+    tr:start(#{limit => 2}),
+    MFA = {?MODULE, factorial, 1},
+    tr:trace([MFA]),
+    factorial(1),
+    expect_log(warning, "Reached trace limit 2"),
+    expect_log(warning, "Tracer process <.+> exited with reason shutdown"),
+    wait_for_traces(2),
+
+    %% expect only first 2 calls
+    [#tr{index = 1, event = call, mfa = MFA, data = [1]},
+     #tr{index = 2, event = call, mfa = MFA, data = [0]}] = tr:select(),
+    tr:stop().
+
+stop_while_tracing(_Config) ->
+    tr:start(),
+    tr:trace([{?MODULE, fib, 1}]),
+    fib(1),
+    wait_for_traces(2),
+    tr:stop(), %% Stop tr when tracing is still enabled
+    tr:start(),
+    MFA = {?MODULE, factorial, 1},
+    tr:trace([MFA]),
+    fib(0), % Shouldn't be traced anymore
+    factorial(0),
+
+    %% Expect only factorial
+    [#tr{index = 1, event = call, mfa = MFA, data = [0]},
+     #tr{index = 2, event = return, mfa = MFA, data = 1}] = tr:select(),
+    tr:stop().
+
+duplicates(_Config) ->
+    {ok, Pid} = tr:start(),
+    {error, {already_started, Pid}} = tr:start(),
+
+    ok = tr:trace([?MODULE]),
+    {error, already_tracing} = tr:trace([?MODULE]),
+
+    ok = tr:stop_tracing(),
+    {error, not_tracing} = tr:stop_tracing(),
+
+    ok = tr:stop(),
+    ?assertExit(noproc, tr:stop()).
 
 single_pid(_Config) ->
     Pid = spawn_link(fun ?MODULE:async_factorial/0),
@@ -565,3 +637,8 @@ wait_and_reply(Sender) ->
     Sender ! {started, self()},
     receive reply -> ok end,
     Sender ! {finished, self()}.
+
+log(#{msg := {Format, Args}, level := Level}, #{config := Pid}) ->
+    Pid ! {Level, lists:flatten(io_lib:format(Format, Args))};
+log(_Event, _Config) ->
+    ok.
