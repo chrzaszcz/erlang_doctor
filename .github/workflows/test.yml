@@ -7,7 +7,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        otp: [21, 22, 23, 24, 25, 26]
+        otp: [21, 22, 23, 24, 25, 26, 27]
     container:
       image: erlang:${{ matrix.otp }}-alpine
     steps:
