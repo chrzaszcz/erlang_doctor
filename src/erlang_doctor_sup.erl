@@ -15,31 +15,21 @@
 
 -define(SERVER, ?MODULE).
 
-%%====================================================================
 %% API functions
-%%====================================================================
 
 start_link() ->
     supervisor:start_link({local, ?SERVER}, ?MODULE, []).
 
-%%====================================================================
 %% Supervisor callbacks
-%%====================================================================
 
-%% Child :: {Id,StartFunc,Restart,Shutdown,Type,Modules}
+-spec init([]) -> {ok, {supervisor:sup_flags(), [supervisor:child_spec()]}}.
 init([]) ->
-    {ok, { {one_for_all, 0, 1},
-           [tr_spec()]}
-    }.
+    {ok, {#{}, [tr_spec()]}}.
 
-%%====================================================================
 %% Internal functions
-%%====================================================================
 
+-spec tr_spec() -> supervisor:child_spec().
 tr_spec() ->
-    {tr,
-     {tr, start_link, []},
-     permanent,
-     brutal_kill,
-     worker,
-     [tr]}.
+    #{id => tr,
+      start => {tr, start_link, []},
+      shutdown => brutal_kill}.

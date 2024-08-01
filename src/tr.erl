@@ -291,7 +291,7 @@ tab() ->
 
 %% @doc Sets a new ETS table for collecting traces, creating it if it doesn't exist.
 -spec set_tab(table()) -> ok.
-set_tab(Tab) ->
+set_tab(Tab) when is_atom(Tab) ->
     gen_server:call(?MODULE, {set_tab, Tab}).
 
 %% @doc Loads an ETS trace table from a file, and makes it the current table.
