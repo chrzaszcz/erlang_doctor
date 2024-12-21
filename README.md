@@ -360,10 +360,16 @@ There is also `tr:ranges/2` - it accepts a [map of options](https://hexdocs.pm/e
 - `tab` is the table or list which is like the second argument of `tr:filter/2`,
 - `max_depth` is the maximum depth of nested calls. A message event also adds 1 to the depth.
     You can use `#{max_depth => 1}` to see only the top-level call and the corresponding return.
+- `output` - `all` (default), `complete` or `incomplete` - decides whether the output should contain
+    complete and/or incomplete ranges. A range is complete if the root call has a return.
+    For example, you can use `#{output => incomplete}` to see only the traces with missing returns.
 
-There are two additional function: `tr:range/1` and `tr:range/2`, which return only one range if it exists. It is possible to pass a [`tr`](https://hexdocs.pm/erlang_doctor/0.2.7/tr.html#t:tr/0) record or an index to `tr:range/1` as well.
+When you combine the options into `#{output => incomplete, max_depth => 1}`,
+you get all the calls which didn't return (they were still executing when tracing was stopped).
 
-### Calling function from a trace: `do`
+There are two additional functions: `tr:range/1` and `tr:range/2`, which return only one range if it exists. It is possible to pass a [`tr`](https://hexdocs.pm/erlang_doctor/0.2.7/tr.html#t:tr/0) record or an index to `tr:range/1` as well.
+
+### Calling a function from a trace: `do`
 
 It is easy to replay a particular function call with `tr:do/1`:
 
