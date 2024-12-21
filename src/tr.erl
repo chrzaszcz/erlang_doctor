@@ -485,7 +485,7 @@ lookup(Index) when is_integer(Index) ->
 %% @doc Returns all module names for an application.
 -spec app_modules(atom()) -> [module()].
 app_modules(AppName) ->
-    Path = code:lib_dir(AppName, ebin),
+    Path = filename:join(code:lib_dir(AppName), ebin),
     {ok, FileNames} = file:list_dir(Path),
     BeamFileNames = lists:filter(fun(Name) -> filename:extension(Name) =:= ".beam" end, FileNames),
     [list_to_atom(filename:rootname(Name)) || Name <- BeamFileNames].
