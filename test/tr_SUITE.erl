@@ -44,7 +44,8 @@ groups() ->
      {range, [ranges,
               ranges_max_depth,
               range,
-              ranges_with_messages]},
+              ranges_with_messages,
+              incomplete_ranges]},
      {traceback, [single_tb,
                   single_tb_with_messages,
                   tb,
@@ -242,6 +243,37 @@ ranges_with_messages(_Config) ->
     %% root call and its return without messages (they have depth of 2)
     Range1 = [hd(Traces), lists:last(Traces)],
     [Range1] = tr:ranges(fun(#tr{}) -> true end, #{max_depth => 1}).
+
+incomplete_ranges(_Config) ->
+    Self = self(),
+    tr:trace(#{modules => [MFA = {?MODULE, wait_and_reply, 1}]}),
+    Pid1 = spawn_link(?MODULE, wait_and_reply, [self()]),
+    Pid2 = spawn_link(?MODULE, wait_and_reply, [self()]),
+    receive {started, Pid1} -> ok end,
+    receive {started, Pid2} -> ok end,
+    Pid2 ! reply,
+    receive {finished, Pid2} -> ok end,
+
+    %% Pid1 finished, but Pid1 didn't
+    wait_for_traces(3),
+    tr:stop_tracing(),
+    Pid1 ! reply,
+    receive {finished, Pid1} -> ok end,
+
+    [#tr{index = 1, pid = Pid1, event = call, mfa = MFA, data = [Self]},
+     #tr{index = 2, pid = Pid2, event = call, mfa = MFA, data = [Self]},
+     #tr{index = 3, pid = Pid2, event = return, mfa = MFA, data = {finished, Pid2}}] =
+        [T1, T2, T3] = tr:select(),
+
+    %% Ranges with missing returns are included at the end
+    [[T2, T3], [T1]] = tr:ranges(fun(#tr{}) -> true end),
+    [[T2, T3], [T1]] = tr:ranges(fun(#tr{}) -> true end, #{output => all}),
+
+    %% Skip ranges with missing returns
+    [[T2, T3]] = tr:ranges(fun(#tr{}) -> true end, #{output => complete}),
+
+    %% Skip ranges with missing returns
+    [[T1]] = tr:ranges(fun(#tr{}) -> true end, #{output => incomplete}).
 
 do(_Config) ->
     tr:trace([{?MODULE, fib, 1}]),

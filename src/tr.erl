@@ -138,11 +138,16 @@
 %% Source of traces: an ETS table or a list of traces. Default: `tab()'.
 
 -type range_options() :: #{tab => tr_source(),
-                           max_depth => limit()}.
+                           max_depth => limit(),
+                           output => range_output()}.
 %% Options for trace ranges.
 %%
 %% Optional `limit' is the maximum depth of calls in the returned ranges.
 %% All traces (including messages) exceeding that depth are skipped.
+
+-type range_output() :: complete | incomplete | all.
+%% Which ranges to return. Incomplete ranges are missing at least one return.
+%% By default, all ranges are returned.
 
 -type tb_options() :: #{tab => tr_source(),
                         output => tb_output(),
@@ -424,9 +429,20 @@ ranges(PredF) ->
 -spec ranges(pred(), range_options()) -> [[tr()]].
 ranges(PredF, Options) when is_map(Options) ->
     Tab = maps:get(tab, Options, tab()),
+    Output = maps:get(output, Options, all),
     InitialState = maps:merge(#{traces => [], pid_states => #{}, max_depth => infinity}, Options),
-    #{traces := Traces} = foldl(fun(T, S) -> range_step(PredF, T, S) end, InitialState, Tab),
+    FinalState = foldl(fun(T, S) -> range_step(PredF, T, S) end, InitialState, Tab),
+    complete_ranges(FinalState, Output) ++ incomplete_ranges(FinalState, Output).
+
+complete_ranges(#{}, incomplete) ->
+    [];
+complete_ranges(#{traces := Traces}, Output) when Output =:= all;  Output =:= complete ->
     lists:reverse(Traces).
+
+incomplete_ranges(#{}, complete) ->
+    [];
+incomplete_ranges(#{pid_states := States}, Output) when Output =:= all; Output =:= incomplete ->
+    lists:sort([Range || #{trace := Range} <- maps:values(States)]).
 
 %% @doc Prints sorted call time statistics for the selected traces from `tab()'.
 %%
