@@ -44,6 +44,7 @@ groups() ->
      {range, [ranges,
               ranges_max_depth,
               range,
+              range_max_depth,
               ranges_with_messages,
               incomplete_ranges]},
      {traceback, [single_tb,
@@ -231,6 +232,17 @@ range(_Config) ->
     Range1 = lists:sublist(Traces, 3, 2),
     Range1 = tr:range(fun(#tr{data = [1]}) -> true end).
 
+range_max_depth(_Config) ->
+    Traces = trace_fib3(),
+
+    %% fib(3) and its return
+    Range1 = [hd(Traces), lists:last(Traces)],
+    Range1 = tr:range(fun(#tr{event = call}) -> true end, #{max_depth => 1}),
+
+    %% fib(3) with fib(2) and fib(1) inside
+    Range2 = lists:sublist(Traces, 2) ++ lists:sublist(Traces, 7, 4),
+    Range2 = tr:range(fun(#tr{event = call}) -> true end, #{max_depth => 2}).
+
 ranges_with_messages(_Config) ->
     Traces = trace_wait_and_reply(),
 
@@ -297,9 +309,15 @@ single_tb(_Config) ->
     ?MODULE:fib(4),
     wait_for_traces(18),
     tr:stop_tracing(),
-    TB = tr:traceback(fun(#tr{event = return, data = N}) when N < 2 -> true end),
-    ct:pal("~p~n", [TB]),
-    ?assertMatch([#tr{data = [1]}, #tr{data = [2]}, #tr{data = [3]}, #tr{data = [4]}], TB).
+
+    PredF = fun(#tr{event = return, data = N}) when N < 2 -> true end,
+    TB = tr:traceback(PredF),
+    ct:pal("Top-down TB: ~p~n", [TB]),
+    ?assertMatch([#tr{data = [1]}, #tr{data = [2]}, #tr{data = [3]}, #tr{data = [4]}], TB),
+
+    TB2 = tr:traceback(PredF, #{order => bottom_up}),
+    ct:pal("Bottom-up TB: ~p~n", [TB2]),
+    ?assertEqual(lists:reverse(TB), TB2).
 
 single_tb_with_messages(_Config) ->
     Traces = [Call, Send, Recv|_] = trace_wait_and_reply(),
