@@ -360,19 +360,19 @@ filter(F, Tab) ->
 %%
 %% @see traceback/2
 -spec traceback(pred() | index() | tr()) -> [tr()].
-traceback(PredF) when is_function(PredF, 1) ->
-    traceback(PredF, #{});
-traceback(Index) when is_integer(Index) ->
-    traceback(fun(#tr{index = I}) -> Index =:= I end);
-traceback(T = #tr{}) ->
-    traceback(fun(Tr) -> Tr =:= T end).
+traceback(Pred) ->
+    traceback(Pred, #{}).
 
 %% @doc Returns traceback of the first matching trace from `t:tr_source()'.
 %%
 %% Fails if no trace is matched.
 %% The options `limit' and `format' do not apply.
--spec traceback(pred(), tb_options()) -> [tr()].
-traceback(PredF, Options) ->
+-spec traceback(pred() | index() | tr(), tb_options()) -> [tr()].
+traceback(Index, Options) when is_integer(Index) ->
+    traceback(fun(#tr{index = I}) -> Index =:= I end, Options);
+traceback(T = #tr{}, Options) ->
+    traceback(fun(Tr) -> Tr =:= T end, Options);
+traceback(PredF, Options) when is_function(PredF, 1) ->
     [TB] = tracebacks(PredF, Options#{limit => 1, format => list}),
     TB.
 
@@ -404,18 +404,18 @@ tracebacks(PredF, Options) when is_map(Options) ->
 %%
 %% @see range/2
 -spec range(pred() | index() | tr()) -> [tr()].
-range(PredF) when is_function(PredF, 1) ->
-    range(PredF, #{});
-range(Index) when is_integer(Index) ->
-    range(fun(#tr{index = I}) -> Index =:= I end);
-range(T = #tr{}) ->
-    range(fun(Tr) -> Tr =:= T end).
+range(PredF) ->
+    range(PredF, #{}).
 
 %% @doc Returns a list of traces from `t:tr_source()' between the first matched call and the corresponding return.
 %%
 %% Fails if no call is matched.
--spec range(pred(), range_options()) -> [tr()].
-range(PredF, Options) ->
+-spec range(pred() | index() | tr(), range_options()) -> [tr()].
+range(Index, Options) when is_integer(Index) ->
+    range(fun(#tr{index = I}) -> Index =:= I end, Options);
+range(T = #tr{}, Options) ->
+    range(fun(Tr) -> Tr =:= T end, Options);
+range(PredF, Options) when is_function(PredF, 1) ->
     hd(ranges(PredF, Options)).
 
 %% @doc Returns lists of traces from `tab()' between matched calls and corresponding returns.
