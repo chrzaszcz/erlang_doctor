@@ -306,7 +306,7 @@ set_tab(Tab) when is_atom(Tab) ->
 load(File) when is_binary(File) ->
     load(binary_to_list(File));
 load(File) when is_list(File) ->
-    gen_server:call(?MODULE, {load, File}).
+    gen_server:call(?MODULE, {load, File}, timer:minutes(2)).
 
 %% @doc Dumps the `tab()' table to a file.
 -spec dump(file:name_all()) -> ok | {error, any()}.
