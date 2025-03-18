@@ -56,7 +56,8 @@ groups() ->
                   tb_all,
                   tb_all_limit,
                   tb_tree,
-                  tb_tree_longest]},
+                  tb_tree_longest,
+                  tb_roots]},
      {util, [do]},
      {call_stat, [simple_total,
                   tree_total,
@@ -428,6 +429,24 @@ tb_tree_longest(_Config) ->
                                                         #tr{data = [1]}]},
                                      {#tr{data = [2]}, [#tr{data = [1]},
                                                         #tr{data = [0]}]}]}], TBs).
+
+tb_roots(_Config) ->
+    tr:trace([{?MODULE, fib, 1}]),
+    ?MODULE:fib(4),
+    wait_for_traces(18),
+    tr:stop_tracing(),
+
+    %% Option 1: call root/1 or roots/1 on a tree
+    TBs = tr:tracebacks(fun(#tr{event = return, data = N}) when N < 2 -> true end,
+                               #{format => tree}),
+    Roots = tr:roots(TBs),
+    ct:pal("Roots: ~p~n", [Roots]),
+    ?assertMatch([#tr{data = [4]}], Roots),
+    ?assertEqual(hd(Roots), tr:root(hd(TBs))),
+
+    %% Option 2: directly use the root format
+    ?assertEqual(Roots, tr:tracebacks(fun(#tr{event = return, data = N}) when N < 2 -> true end,
+                                      #{format => root})).
 
 simple_total(_Config) ->
     tr:trace([{?MODULE, factorial, 1}]),

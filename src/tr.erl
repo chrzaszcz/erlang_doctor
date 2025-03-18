@@ -22,6 +22,7 @@
          filter/1, filter/2,
          traceback/1, traceback/2,
          tracebacks/1, tracebacks/2,
+         roots/1, root/1,
          range/1, range/2,
          ranges/1, ranges/2,
          call_tree_stat/0, call_tree_stat/1,
@@ -162,14 +163,18 @@
 -type tb_output() :: shortest | longest | all.
 %% Which tracebacks to return if they overlap. Default: `shortest'.
 
--type tb_format() :: tree | list.
-%% Merge tracebacks into a `tree' or return a `list' (default) of them.
+-type tb_format() :: list | tree | root.
+%% Format in which tracebacks are returned.
+%%
+%% `list' (default) returns a list of tracebacks.
+%% `tree' merges them into a list of trees.
+%% `root' returns only the root of each tree.
 
 -type tb_order() :: top_down | bottom_up.
 %% Order of calls in each returned traceback. Default: `top_down'.
 
--type tb_tree() :: [tr() | {tr(), tb_tree()}].
-%% Multiple tracebacks merged into a tree structure.
+-type tb_tree() :: tr() | {tr(), [tb_tree()]}.
+%% Multiple tracebacks with a common root merged into a tree structure.
 
 -type tb_acc_tree() :: [{tr(), tb_acc_tree()}].
 -type tb_acc_list() :: [[tr()]].
@@ -379,12 +384,12 @@ traceback(PredF, Options) when is_function(PredF, 1) ->
 %% @doc Returns tracebacks of all matching traces from `tab()'.
 %%
 %% @see tracebacks/2
--spec tracebacks(pred()) -> [[tr()]] | tb_tree().
+-spec tracebacks(pred()) -> [[tr()]] | [tb_tree()].
 tracebacks(PredF) ->
     tracebacks(PredF, #{}).
 
 %% @doc Returns tracebacks of all matching traces from `t:tr_source()'.
--spec tracebacks(pred(), tb_options()) -> [[tr()]] | tb_tree().
+-spec tracebacks(pred(), tb_options()) -> [[tr()]] | [tb_tree()].
 tracebacks(PredF, Options) when is_map(Options) ->
     Tab = maps:get(tab, Options, tab()),
     Output = maps:get(output, Options, shortest),
@@ -396,6 +401,16 @@ tracebacks(PredF, Options) when is_map(Options) ->
     #{tbs := TBs} =
         foldl(fun(T, State) -> tb_step(PredF, T, State) end, InitialState, Tab),
     finalize_tracebacks(TBs, Output, Format, Options).
+
+%% @doc Returns the root call of each `t:tb_tree()` from the provided list.
+-spec roots([tb_tree()]) -> [tr()].
+roots(Trees) ->
+    lists:map(fun root/1, Trees).
+
+%% @doc Returns the root call of the provided `t:tb_tree()`.
+-spec root(tb_tree()) -> tr().
+root(#tr{} = T) -> T;
+root({#tr{} = T, _}) -> T.
 
 %% @doc Returns a list of traces from `tab()' between the first matched call and the corresponding return.
 %%
@@ -827,6 +842,8 @@ finalize_tracebacks(TBs, all, list, Options) ->
     reorder_tb(lists:reverse(TBs), maps:get(order, Options, top_down));
 finalize_tracebacks(TBs, _, list, Options) ->
     reorder_tb(tree_to_list(TBs), maps:get(order, Options, top_down));
+finalize_tracebacks(TBs, _, root, _Options) ->
+    lists:map(fun({T, _}) -> T end, lists:reverse(TBs));
 finalize_tracebacks(TBs, _, tree, _Options) ->
     finalize_tree(TBs).
 
@@ -837,10 +854,11 @@ reorder_tb(TBs, bottom_up) -> TBs.
 -spec tree_to_list(tb_acc_tree()) -> [[tr()]].
 tree_to_list(Tree) ->
     lists:foldl(fun({K, []}, Res) -> [[K] | Res];
-                   ({K, V}, Res) -> [[K | Rest] || Rest <- tree_to_list(V)] ++ Res end, [], Tree).
+                   ({K, V}, Res) -> [[K | Rest] || Rest <- tree_to_list(V)] ++ Res
+                end, [], Tree).
 
 %% Reverse order and simplify leaf nodes
--spec finalize_tree(tb_acc_tree()) -> tb_tree().
+-spec finalize_tree(tb_acc_tree()) -> [tb_tree()].
 finalize_tree(Tree) ->
     lists:foldl(fun({K, []}, Res) -> [K | Res];
                    ({K, V}, Res) -> [{K, finalize_tree(V)} | Res]
