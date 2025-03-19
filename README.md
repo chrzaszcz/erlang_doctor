@@ -327,7 +327,7 @@ Possible [options](https://hexdocs.pm/erlang_doctor/0.2.8/tr.html#t:tb_options/0
 
 - `tab` is the table or list which is like the second argument of `tr:filter/2`,
 - `output` - `shortest` (default), `all`, `longest` - see above.
-- `format` - `list` (default), `tree` - returns a call tree instead of a list of tracebacks. Trees don't distinguish between `all` and `longest` output formats.
+- `format` - `list` (default), `tree` - returns a list of (possibly merged) call trees instead of tracebacks, `root` - returns a list of root calls. Trees and roots don't distinguish between `all` and `longest` output formats. Using `root` is equivalent to using `tree`, and then calling `tr:roots/1` on the results. There is also `tr:root/1` for a single tree.
 - `order` - `top_down` (default), `bottom_up` - call order in each tracaback; only for the `list` format.
 - `limit` - positive integer or `infinity` (default) - limits the number of matched traces. The actual number of tracebacks returned can be smaller unless `output => all`
 
