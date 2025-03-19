@@ -36,6 +36,7 @@
 -export([contains_data/2,
          do/1,
          lookup/1,
+         next/1, seq_next/1, next/2, prev/1, seq_prev/1, prev/2,
          app_modules/1,
          mfarity/1,
          mfargs/2,
@@ -226,6 +227,13 @@
 
 -type tree_item() :: {acc_time(), call_tree_count(), tree()}.
 %% Function call tree with its accumulated time and number of repetitions.
+
+-type prev_next_options() :: #{tab => table(),
+                               pred => pred()}.
+%% Options for obtaining previous and next traces.
+%%
+%% `tab' is the ETS table with traces (default: `trace').
+%% `pred' allows to filter the matching traces (default: allow any trace)
 
 -export_type([tr/0, index/0, recipient/0]).
 
@@ -512,6 +520,78 @@ do(#tr{event = call, mfa = {M, F, Arity}, data = Args}) when length(Args) =:= Ar
 lookup(Index) when is_integer(Index) ->
     [T] = ets:lookup(tab(), Index),
     T.
+
+%% Returns the next trace after the provided index or a trace record.
+-spec next(index() | tr()) -> tr().
+next(Index) when is_integer(Index) ->
+    next(Index, #{});
+next(#tr{index = Index}) ->
+    next(Index, #{}).
+
+%% Returns the next trace after the provided index or a trace record and from the same process.
+-spec seq_next(index() | tr()) -> tr().
+seq_next(Index) when is_integer(Index) ->
+    seq_next(lookup(Index));
+seq_next(#tr{index = Index, pid = Pid}) ->
+    next(Index, #{pred => fun(#tr{pid = P}) -> P =:= Pid end}).
+
+%% @doc Returns the next trace after the provided index or a trace record.
+%% The traces can be filtered by the provided predicate.
+-spec next(index() | tr(), prev_next_options()) -> tr().
+next(Index, Options) when is_integer(Index) ->
+    Pred = maps:get(pred, Options, fun(_) -> true end),
+    Tab = maps:get(tab, Options, tab()),
+    next(Index, Pred, Tab);
+next(#tr{index = Index}, Options) ->
+    next(Index, Options).
+
+-spec next(index(), pred(), table()) -> tr().
+next(Index, Pred, Tab) ->
+    case ets:next_lookup(Tab, Index) of
+        {NextIndex, [NextT]} ->
+            case catch Pred(NextT) of
+                true -> NextT;
+                _ -> next(NextIndex, Pred, Tab)
+            end;
+        _ ->
+            error(not_found, [Index, Pred, Tab])
+    end.
+
+%% Returns the previous trace before the provided index or a trace record.
+-spec prev(index() | tr()) -> tr().
+prev(Index) when is_integer(Index) ->
+    prev(Index, #{});
+prev(#tr{index = Index}) ->
+    prev(Index, #{}).
+
+%% Returns the previous trace before the provided index or a trace record and from the same process.
+-spec seq_prev(index() | tr()) -> tr().
+seq_prev(Index) when is_integer(Index) ->
+    seq_prev(lookup(Index));
+seq_prev(#tr{index = Index, pid = Pid}) ->
+    prev(Index, #{pred => fun(#tr{pid = P}) -> P =:= Pid end}).
+
+%% @doc Returns the previous trace before the provided index or a trace record.
+%% The traces can be filtered by the provided predicate.
+-spec prev(index() | tr(), prev_next_options()) -> tr().
+prev(Index, Options) when is_integer(Index) ->
+    Pred = maps:get(pred, Options, fun(_) -> true end),
+    Tab = maps:get(tab, Options, tab()),
+    prev(Index, Pred, Tab);
+prev(#tr{index = Index}, Options) ->
+    prev(Index, Options).
+
+-spec prev(index(), pred(), table()) -> tr().
+prev(Index, Pred, Tab) ->
+    case ets:prev_lookup(Tab, Index) of
+        {PrevIndex, [PrevT]} ->
+            case catch Pred(PrevT) of
+                true -> PrevT;
+                _ -> prev(PrevIndex, Pred, Tab)
+            end;
+        _ ->
+            error(not_found, [Index, Pred, Tab])
+    end.
 
 %% @doc Returns all module names for an application.
 -spec app_modules(atom()) -> [module()].
