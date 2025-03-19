@@ -36,6 +36,7 @@
 -export([contains_data/2,
          do/1,
          lookup/1,
+         next/1, next/2, prev/1, prev/2,
          app_modules/1,
          mfarity/1,
          mfargs/2,
@@ -512,6 +513,24 @@ do(#tr{event = call, mfa = {M, F, Arity}, data = Args}) when length(Args) =:= Ar
 lookup(Index) when is_integer(Index) ->
     [T] = ets:lookup(tab(), Index),
     T.
+
+next(#tr{index = Index, pid = Pid}) ->
+    next(Pid, Index).
+
+next(Pid, Index) ->
+    case ets:next_lookup(tab(), Index) of
+        {_NextIndex, [#tr{pid = Pid} = NextT]} -> NextT;
+        {NextIndex, _} -> next(Pid, NextIndex)
+    end.
+
+prev(#tr{index = Index, pid = Pid}) ->
+    prev(Pid, Index).
+
+prev(Pid, Index) ->
+    case ets:prev_lookup(tab(), Index) of
+        {_PrevIndex, [#tr{pid = Pid} = NextT]} -> NextT;
+        {PrevIndex, _} -> prev(Pid, PrevIndex)
+    end.
 
 %% @doc Returns all module names for an application.
 -spec app_modules(atom()) -> [module()].
