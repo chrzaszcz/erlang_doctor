@@ -402,12 +402,12 @@ tracebacks(PredF, Options) when is_map(Options) ->
         foldl(fun(T, State) -> tb_step(PredF, T, State) end, InitialState, Tab),
     finalize_tracebacks(TBs, Output, Format, Options).
 
-%% @doc Returns the root call of each `t:tb_tree()` from the provided list.
+%% @doc Returns the root call of each `t:tb_tree()' from the provided list.
 -spec roots([tb_tree()]) -> [tr()].
 roots(Trees) ->
     lists:map(fun root/1, Trees).
 
-%% @doc Returns the root call of the provided `t:tb_tree()`.
+%% @doc Returns the root call of the provided `t:tb_tree()'.
 -spec root(tb_tree()) -> tr().
 root(#tr{} = T) -> T;
 root({#tr{} = T, _}) -> T.
