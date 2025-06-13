@@ -228,6 +228,10 @@
 -type tree_item() :: {acc_time(), call_tree_count(), tree()}.
 %% Function call tree with its accumulated time and number of repetitions.
 
+-type prev_next_options() :: #{tab => table(),
+                               pred => pred()}.
+%% Options for obtaining previous and next traces.
+
 -export_type([tr/0, index/0, recipient/0]).
 
 %% API - capturing, data manipulation
@@ -514,22 +518,22 @@ lookup(Index) when is_integer(Index) ->
     [T] = ets:lookup(tab(), Index),
     T.
 
-next(#tr{index = Index, pid = Pid}) ->
-    next(Pid, Index).
+-spec next(index() | tr()) -> tr() | not_found.
+next(Index) when is_integer(Index) ->
+    next(lookup(Index));
+next(T = #tr{index = Index}) ->
+    next(Index, fun(_) -> true end, tab()).
 
-next(Pid, Index) ->
-    case ets:next_lookup(tab(), Index) of
-        {_NextIndex, [#tr{pid = Pid} = NextT]} -> NextT;
-        {NextIndex, _} -> next(Pid, NextIndex)
-    end.
-
-prev(#tr{index = Index, pid = Pid}) ->
-    prev(Pid, Index).
-
-prev(Pid, Index) ->
-    case ets:prev_lookup(tab(), Index) of
-        {_PrevIndex, [#tr{pid = Pid} = NextT]} -> NextT;
-        {PrevIndex, _} -> prev(Pid, PrevIndex)
+-spec next(index(), prev_next_options()) -> tr() | not_found.
+next(Index, #{pred := Pred, tab := Tab} = Options) ->
+    case ets:next_lookup(Tab, Index) of
+        {NextIndex, NextT} ->
+            case catch Pred(NextT) of
+                true -> NextT;
+                _ -> next(NextIndex, Options)
+            end;
+        _ ->
+            not_found
     end.
 
 %% @doc Returns all module names for an application.
