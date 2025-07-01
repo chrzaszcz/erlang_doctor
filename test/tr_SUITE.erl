@@ -58,7 +58,9 @@ groups() ->
                   tb_tree,
                   tb_tree_longest,
                   tb_roots]},
-     {util, [do]},
+     {util, [contains,
+             match,
+             do]},
      {call_stat, [simple_total,
                   tree_total,
                   simple_total_with_messages,
@@ -287,6 +289,24 @@ incomplete_ranges(_Config) ->
 
     %% Skip ranges with missing returns
     [[T1]] = tr:ranges(fun(#tr{}) -> true end, #{output => incomplete}).
+
+contains(_Config) ->
+    trace_fib3(),
+    Result = tr:filter(fun(T) -> tr:contains_data(1, T) end),
+    ?assertMatch([#tr{index = 3, event = call, data = [1]},
+                  #tr{index = 4, event = return, data = 1},
+                  #tr{index = 7, event = return, data = 1},
+                  #tr{index = 8, event = call, data = [1]},
+                  #tr{index = 9, event = return, data = 1}], Result),
+    ?assertEqual(Result, tr:filter(fun(#tr{data = Data}) -> tr:contains_val(1, Data) end)).
+
+match(_Config) ->
+    trace_fib3(),
+    Pred = fun([N]) -> N > 1 end,
+    Result = tr:filter(fun(T) -> tr:match_data(Pred, T) end),
+    ?assertMatch([#tr{index = 1, event = call, data = [3]},
+                  #tr{index = 2, event = call, data = [2]}], Result),
+    ?assertEqual(Result, tr:filter(fun(#tr{data = Data}) -> tr:match_val(Pred, Data) end)).
 
 do(_Config) ->
     tr:trace([{?MODULE, fib, 1}]),
