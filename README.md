@@ -243,6 +243,25 @@ There is also `tr:filter/2`, which can be used to search in a different table th
      ts = 1705475521744690,info = no_info}]
 ```
 
+There are also additional ready-to-use predicates besides `tr:contains_data/2`:
+
+1. `tr:match_data/2` performs a recursive check for terms like `tr:contains_data/2`,
+  but instead of checking for equality, it applies the predicate function
+  provided as the first argument to each term, and returns `true` if the predicate returned `true`
+  for any of them. The predicate can return any other value or fail for non-matching terms.
+1. `tr:contains_val/2` is like `tr:contains_data/2`, but the second argument is the `Data` term itself rather than a trace record with data.
+2. `tr:match_val/2` is like `tr:match_data/2`, but the second argument is the `Data` term itself rather than a trace record with data.
+
+By combining these predicates, you can search for complex terms, e.g.
+the following expression returns trace records that contain any (possibly nested in tuples/lists/maps)
+3-element tuples with a map as the third element - and that map has to contain the atom `error`
+(possibly nested in tuples/lists/maps).
+
+
+```erlang
+tr:filter(fun(T) -> tr:match_data(fun({_, _, Map = #{}}) -> tr:contains_val(error, Map) end, T) end).
+```
+
 ### Tracebacks for filtered traces: `tracebacks`
 
 To find the tracebacks (stack traces) for matching traces, use `tr:tracebacks/1`:
