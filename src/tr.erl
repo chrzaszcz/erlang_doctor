@@ -33,9 +33,10 @@
          call_stat/1, call_stat/2]).
 
 %% API - utilities
--export([contains_data/2,
+-export([match_data/2, contains_data/2, contains_val/2, match_val/2,
          do/1,
          lookup/1,
+         next/1, seq_next/1, next/2, prev/1, seq_prev/1, prev/2,
          app_modules/1,
          mfarity/1,
          mfargs/2,
@@ -77,10 +78,10 @@
 %%  <li>`info' - For `send' events it is a `t:recipient()' tuple; otherwise `no_info'.</li>
 %% </ul>
 
--type pred() :: fun((tr()) -> boolean()).
-%% Predicate returning `true' for matching traces.
+-type pred(T) :: fun((T) -> boolean()).
+%% Predicate returning `true' for matching terms of type `T'.
 %%
-%% For other traces it can return a different value or fail.
+%% For other terms, it can return a different value or fail.
 
 -type selector(Data) :: fun((tr()) -> Data).
 %% Trace selector function.
@@ -227,6 +228,13 @@
 -type tree_item() :: {acc_time(), call_tree_count(), tree()}.
 %% Function call tree with its accumulated time and number of repetitions.
 
+-type prev_next_options() :: #{tab => table(),
+                               pred => pred(tr())}.
+%% Options for obtaining previous and next traces.
+%%
+%% `tab' is the ETS table with traces (default: `trace').
+%% `pred' allows to filter the matching traces (default: allow any trace)
+
 -export_type([tr/0, index/0, recipient/0]).
 
 %% API - capturing, data manipulation
@@ -348,12 +356,12 @@ select(F, DataVal) ->
     select(MS, DataVal, [], SelectRes).
 
 %% @doc Returns matching traces from `tab()'.
--spec filter(pred()) -> [tr()].
+-spec filter(pred(tr())) -> [tr()].
 filter(F) ->
     filter(F, tab()).
 
 %% @doc Returns matching traces from `t:tr_source()'.
--spec filter(pred(), tr_source()) -> [tr()].
+-spec filter(pred(tr()), tr_source()) -> [tr()].
 filter(F, Tab) ->
     Traces = foldl(fun(Tr, State) -> filter_trace(F, Tr, State) end, [], Tab),
     lists:reverse(Traces).
@@ -364,7 +372,7 @@ filter(F, Tab) ->
 %% Fails if no trace is matched.
 %%
 %% @see traceback/2
--spec traceback(pred() | index() | tr()) -> [tr()].
+-spec traceback(pred(tr()) | index() | tr()) -> [tr()].
 traceback(Pred) ->
     traceback(Pred, #{}).
 
@@ -372,7 +380,7 @@ traceback(Pred) ->
 %%
 %% Fails if no trace is matched.
 %% The options `limit' and `format' do not apply.
--spec traceback(pred() | index() | tr(), tb_options()) -> [tr()].
+-spec traceback(pred(tr()) | index() | tr(), tb_options()) -> [tr()].
 traceback(Index, Options) when is_integer(Index) ->
     traceback(fun(#tr{index = I}) -> Index =:= I end, Options);
 traceback(T = #tr{}, Options) ->
@@ -384,12 +392,12 @@ traceback(PredF, Options) when is_function(PredF, 1) ->
 %% @doc Returns tracebacks of all matching traces from `tab()'.
 %%
 %% @see tracebacks/2
--spec tracebacks(pred()) -> [[tr()]] | [tb_tree()].
+-spec tracebacks(pred(tr())) -> [[tr()]] | [tb_tree()].
 tracebacks(PredF) ->
     tracebacks(PredF, #{}).
 
 %% @doc Returns tracebacks of all matching traces from `t:tr_source()'.
--spec tracebacks(pred(), tb_options()) -> [[tr()]] | [tb_tree()].
+-spec tracebacks(pred(tr()), tb_options()) -> [[tr()]] | [tb_tree()].
 tracebacks(PredF, Options) when is_map(Options) ->
     Tab = maps:get(tab, Options, tab()),
     Output = maps:get(output, Options, shortest),
@@ -418,14 +426,14 @@ root({#tr{} = T, _}) -> T.
 %% Fails if no trace is matched.
 %%
 %% @see range/2
--spec range(pred() | index() | tr()) -> [tr()].
+-spec range(pred(tr()) | index() | tr()) -> [tr()].
 range(PredF) ->
     range(PredF, #{}).
 
 %% @doc Returns a list of traces from `t:tr_source()' between the first matched call and the corresponding return.
 %%
 %% Fails if no call is matched.
--spec range(pred() | index() | tr(), range_options()) -> [tr()].
+-spec range(pred(tr()) | index() | tr(), range_options()) -> [tr()].
 range(Index, Options) when is_integer(Index) ->
     range(fun(#tr{index = I}) -> Index =:= I end, Options);
 range(T = #tr{}, Options) ->
@@ -436,12 +444,12 @@ range(PredF, Options) when is_function(PredF, 1) ->
 %% @doc Returns lists of traces from `tab()' between matched calls and corresponding returns.
 %%
 %% @see ranges/2
--spec ranges(pred()) -> [[tr()]].
+-spec ranges(pred(tr())) -> [[tr()]].
 ranges(PredF) ->
     ranges(PredF, #{}).
 
 %% @doc Returns lists of traces from `t:tr_source()' between matched calls and corresponding returns.
--spec ranges(pred(), range_options()) -> [[tr()]].
+-spec ranges(pred(tr()), range_options()) -> [[tr()]].
 ranges(PredF, Options) when is_map(Options) ->
     Tab = maps:get(tab, Options, tab()),
     Output = maps:get(output, Options, all),
@@ -493,12 +501,48 @@ call_stat(KeyF, Tab) ->
 
 %% API - utilities
 
-%% @doc Looks for `DataVal' in `#tr.data'.
+%% @doc Returns traces with `#tr.data' containing any values matching the provided predicate.
+%%
+%% The matching values can occur in (possibly nested) tuples, maps or lists.
+-spec match_data(pred(term()), tr()) -> boolean().
+match_data(Pred, #tr{data = Data}) when is_function(Pred, 1) ->
+    match_val(Pred, Data).
+
+%% @doc Returns traces containing `DataVal' in `#tr.data'.
 %%
 %% `DataVal' can occur in (possibly nested) tuples, maps or lists.
 -spec contains_data(term(), tr()) -> boolean().
 contains_data(DataVal, #tr{data = Data}) ->
     contains_val(DataVal, Data).
+
+%% @doc Checks if `Val' contains any values matching the predicate `Pred'.
+%%
+%% The matching values can occur in (possibly nested) tuples, maps or lists.
+-spec match_val(pred(T), T) -> boolean().
+match_val(Pred, Val) ->
+    case catch Pred(Val) of
+        true ->
+            true;
+        _ ->
+            case Val of
+                [_|_] ->
+                    lists:any(fun(El) -> match_val(Pred, El) end, Val);
+                _ when is_tuple(Val) ->
+                    match_val(Pred, tuple_to_list(Val));
+                #{} when map_size(Val) > 0 ->
+                    match_val(Pred, maps:to_list(Val));
+                _ ->
+                    false
+            end
+    end.
+
+%% @doc Checks if the given value `DataVal' is present within `Data'.
+%%
+%% Returns `true' if `DataVal' is found, otherwise returns `false'.
+%% `DataVal' can occur in (possibly nested) tuples, maps or lists.
+-spec contains_val(T, T) -> boolean().
+contains_val(DataVal, Data) ->
+    match_val(fun(Val) -> Val =:= DataVal end, Data).
 
 %% @doc Executes the function call for the provided `t:tr()' record or index.
 -spec do(tr()) -> term().
@@ -512,6 +556,78 @@ do(#tr{event = call, mfa = {M, F, Arity}, data = Args}) when length(Args) =:= Ar
 lookup(Index) when is_integer(Index) ->
     [T] = ets:lookup(tab(), Index),
     T.
+
+%% Returns the next trace after the provided index or a trace record.
+-spec next(index() | tr()) -> tr().
+next(Index) when is_integer(Index) ->
+    next(Index, #{});
+next(#tr{index = Index}) ->
+    next(Index, #{}).
+
+%% Returns the next trace after the provided index or a trace record and from the same process.
+-spec seq_next(index() | tr()) -> tr().
+seq_next(Index) when is_integer(Index) ->
+    seq_next(lookup(Index));
+seq_next(#tr{index = Index, pid = Pid}) ->
+    next(Index, #{pred => fun(#tr{pid = P}) -> P =:= Pid end}).
+
+%% @doc Returns the next trace after the provided index or a trace record.
+%% The traces can be filtered by the provided predicate.
+-spec next(index() | tr(), prev_next_options()) -> tr().
+next(Index, Options) when is_integer(Index) ->
+    Pred = maps:get(pred, Options, fun(_) -> true end),
+    Tab = maps:get(tab, Options, tab()),
+    next(Index, Pred, Tab);
+next(#tr{index = Index}, Options) ->
+    next(Index, Options).
+
+-spec next(index(), pred(tr()), table()) -> tr().
+next(Index, Pred, Tab) ->
+    case ets:lookup(Tab, ets:next(Tab, Index)) of
+        [NextT = #tr{index = NextIndex}] ->
+            case catch Pred(NextT) of
+                true -> NextT;
+                _ -> next(NextIndex, Pred, Tab)
+            end;
+        _ ->
+            error(not_found, [Index, Pred, Tab])
+    end.
+
+%% Returns the previous trace before the provided index or a trace record.
+-spec prev(index() | tr()) -> tr().
+prev(Index) when is_integer(Index) ->
+    prev(Index, #{});
+prev(#tr{index = Index}) ->
+    prev(Index, #{}).
+
+%% Returns the previous trace before the provided index or a trace record and from the same process.
+-spec seq_prev(index() | tr()) -> tr().
+seq_prev(Index) when is_integer(Index) ->
+    seq_prev(lookup(Index));
+seq_prev(#tr{index = Index, pid = Pid}) ->
+    prev(Index, #{pred => fun(#tr{pid = P}) -> P =:= Pid end}).
+
+%% @doc Returns the previous trace before the provided index or a trace record.
+%% The traces can be filtered by the provided predicate.
+-spec prev(index() | tr(), prev_next_options()) -> tr().
+prev(Index, Options) when is_integer(Index) ->
+    Pred = maps:get(pred, Options, fun(_) -> true end),
+    Tab = maps:get(tab, Options, tab()),
+    prev(Index, Pred, Tab);
+prev(#tr{index = Index}, Options) ->
+    prev(Index, Options).
+
+-spec prev(index(), pred(tr()), table()) -> tr().
+prev(Index, Pred, Tab) ->
+    case ets:lookup(Tab, ets:prev(Tab, Index)) of
+        [PrevT = #tr{index = PrevIndex}] ->
+            case catch Pred(PrevT) of
+                true -> PrevT;
+                _ -> prev(PrevIndex, Pred, Tab)
+            end;
+        _ ->
+            error(not_found, [Index, Pred, Tab])
+    end.
 
 %% @doc Returns all module names for an application.
 -spec app_modules(atom()) -> [module()].
@@ -630,9 +746,7 @@ create_tab(Tab) ->
 select(_MS, _DataVal, DataAcc, '$end_of_table') ->
     lists:append(lists:reverse(DataAcc));
 select(MS, DataVal, DataAcc, {Matched, Cont}) ->
-    Filtered = lists:filter(fun(#tr{data = Data}) -> contains_val(DataVal, Data);
-                               (T) -> contains_val(DataVal, T)
-                            end, Matched),
+    Filtered = lists:filter(fun(T) -> contains_data(DataVal, T) end, Matched),
     SelectRes = ets:select(Cont),
     select(MS, DataVal, [Filtered | DataAcc], SelectRes).
 
@@ -641,12 +755,6 @@ filter_trace(F, T, State) ->
         true -> [T | State];
         _ -> State
     end.
-
-contains_val(DataVal, DataVal) -> true;
-contains_val(DataVal, L) when is_list(L) -> lists:any(fun(El) -> contains_val(DataVal, El) end, L);
-contains_val(DataVal, T) when is_tuple(T) -> contains_val(DataVal, tuple_to_list(T));
-contains_val(DataVal, M) when is_map(M) -> contains_val(DataVal, maps:to_list(M));
-contains_val(_, _) -> false.
 
 index(Tab) ->
     case ets:last(Tab) of
@@ -803,7 +911,7 @@ stop_skipping_messages(Pid, PidsTab) ->
 
 %% Filter tracebacks
 
--spec tb_step(pred(), tr(), map()) -> map().
+-spec tb_step(pred(tr()), tr(), map()) -> map().
 tb_step(PredF, T = #tr{pid = Pid, event = Event},
         State = #{tbs := TBs, call_stacks := CallStacks, output := Output, format := Format,
                   count := Count, limit := Limit}) ->

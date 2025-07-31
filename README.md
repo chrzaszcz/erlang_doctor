@@ -243,6 +243,25 @@ There is also `tr:filter/2`, which can be used to search in a different table th
      ts = 1705475521744690,info = no_info}]
 ```
 
+There are also additional ready-to-use predicates besides `tr:contains_data/2`:
+
+1. `tr:match_data/2` performs a recursive check for terms like `tr:contains_data/2`,
+  but instead of checking for equality, it applies the predicate function
+  provided as the first argument to each term, and returns `true` if the predicate returned `true`
+  for any of them. The predicate can return any other value or fail for non-matching terms.
+1. `tr:contains_val/2` is like `tr:contains_data/2`, but the second argument is the `Data` term itself rather than a trace record with data.
+2. `tr:match_val/2` is like `tr:match_data/2`, but the second argument is the `Data` term itself rather than a trace record with data.
+
+By combining these predicates, you can search for complex terms, e.g.
+the following expression returns trace records that contain any (possibly nested in tuples/lists/maps)
+3-element tuples with a map as the third element - and that map has to contain the atom `error`
+(possibly nested in tuples/lists/maps).
+
+
+```erlang
+tr:filter(fun(T) -> tr:match_data(fun({_, _, Map = #{}}) -> tr:contains_val(error, Map) end, T) end).
+```
+
 ### Tracebacks for filtered traces: `tracebacks`
 
 To find the tracebacks (stack traces) for matching traces, use `tr:tracebacks/1`:
@@ -386,9 +405,46 @@ It is easy to replay a particular function call with `tr:do/1`:
 This is useful e.g. for checking if a bug has been fixed without running the whole test suite.
 This function can be called with an index as the argument.
 
-### Getting a single trace for the index: `lookup`
+### Browsing traces: `lookup`, `prev`, `next`
 
-Use `tr:lookup/1` to obtain the trace for an index.
+Use `tr:lookup/1` to obtain the trace record for an index. Also, given a trace record or an index,
+you can obtain the next trace record with `tr:next/1`, or the previous one with `tr:prev/1`.
+
+```erlang
+18> T2 = tr:next(T).
+#tr{index = 2,pid = <0.424.0>,event = call,
+    mfa = {tr_SUITE,sleepy_factorial,1},
+    data = [2],
+    ts = 1752566205078116,info = no_info}
+19> T = tr:prev(T2).
+#tr{index = 1,pid = <0.424.0>,event = call,
+    mfa = {tr_SUITE,sleepy_factorial,1},
+    data = [3],
+    ts = 1752566205069393,info = no_info}
+```
+
+When there is no trace to return, `not_found` error is raised:
+
+```erlang
+20> tr:prev(T).
+** exception error: not_found
+     in function  tr:prev/3
+        called as tr:prev(1,#Fun<tr.15.31036569>,trace)
+```
+
+There are also more advanced variants of these fucntions: `tr:next/2` and `tr:prev/2`.
+As their second argument, they take a [map of options](https://hexdocs.pm/erlang_doctor/0.2.9/tr.html#t:prev_next_options/0), including:
+
+- `tab` is the table or list (like the second argument of `tr:filter/2`),
+- `pred` is a predicate function that should return `true` for a matching trace record.
+    For other arguments, it can return a different value or fail.
+    When used, `tab` will be traversed until a matching trace is found.
+
+There are also functions `tr:seq_next/1` and `tr:seq_prev/1`.
+Given a trace record or an index, they first check the `Pid` of the process for that trace record,
+and then they return next/previous trace record with the same `Pid`.
+This effect could be achieved with a predicate function: `fun(#tr{pid = P}) -> P =:= Pid end`,
+but these utility functions are much more handy.
 
 ## Profiling
 
@@ -401,7 +457,7 @@ The simplest way to use this function is to look at the total number of calls an
 To do this, we group all calls under one key, e.g. `total`:
 
 ```erlang
-18> tr:call_stat(fun(_) -> total end).
+20> tr:call_stat(fun(_) -> total end).
 #{total => {4,7216,7216}}
 ```
 
@@ -414,7 +470,7 @@ For nested calls we only take into account the outermost call, so this means tha
 Let's see how this looks like for individual steps - we can group the stats by the function argument:
 
 ```erlang
-19> tr:call_stat(fun(#tr{data = [N]}) -> N end).
+21> tr:call_stat(fun(#tr{data = [N]}) -> N end).
 #{0 => {1,1952,1952},
   1 => {1,3983,2031},
   2 => {1,5764,1781},
@@ -424,7 +480,7 @@ Let's see how this looks like for individual steps - we can group the stats by t
 You can use the provided function to do filtering as well:
 
 ```erlang
-20> tr:call_stat(fun(#tr{data = [N]}) when N < 3 -> N end).
+22> tr:call_stat(fun(#tr{data = [N]}) when N < 3 -> N end).
 #{0 => {1,1952,1952},1 => {1,3983,2031},2 => {1,5764,1781}}
 ```
 
@@ -433,7 +489,7 @@ You can use the provided function to do filtering as well:
 You can sort the call stat by accumulated time (descending) with `tr:sorted_call_stat/1`:
 
 ```erlang
-21> tr:sorted_call_stat(fun(#tr{data = [N]}) -> N end).
+23> tr:sorted_call_stat(fun(#tr{data = [N]}) -> N end).
 [{3,1,7216,1452},
  {2,1,5764,1781},
  {1,1,3983,2031},
@@ -445,7 +501,7 @@ To pretty-print it, use `tr:print_sorted_call_stat/2`.
 The second argument limits the table row number, e.g. we can only print the top 3 items:
 
 ```erlang
-22> tr:print_sorted_call_stat(fun(#tr{data = [N]}) -> N end, 3).
+24> tr:print_sorted_call_stat(fun(#tr{data = [N]}) -> N end, 3).
 3  1  7216  1452
 2  1  5764  1781
 1  1  3983  2031
@@ -462,20 +518,20 @@ As an example, let's trace the call to a function which calculates the 4th eleme
 in a recursive way. The `trace` table should be empty, so let's clean it up first:
 
 ```erlang
-23> tr:clean().
+25> tr:clean().
 ok
-24> tr:trace([tr_SUITE]).
+26> tr:trace([tr_SUITE]).
 ok
-25> tr_SUITE:fib(4).
+27> tr_SUITE:fib(4).
 3
-26> tr:stop_tracing().
+28> tr:stop_tracing().
 ok
 ```
 
 Now it is possible to print the most time consuming call trees that repeat at least twice:
 
 ```erlang
-27> tr:top_call_trees().
+29> tr:top_call_trees().
 [{13,2,
   #node{module = tr_SUITE,function = fib,
         args = [2],
@@ -513,23 +569,23 @@ As an exercise, try calling `tr:top_call_trees(#{min_count => 1000})` for `fib(2
 To get the current table name, use `tr:tab/0`:
 
 ```erlang
-28> tr:tab().
+30> tr:tab().
 trace
 ```
 
 To switch to a new table, use `tr:set_tab/1`. The table need not exist.
 
 ```erlang
-29> tr:set_tab(tmp).
+31> tr:set_tab(tmp).
 ok
 ```
 
 Now you can collect traces to the new table without changing the original one.
 
 ```erlang
-30> tr:trace([lists]), lists:seq(1, 10), tr:stop_tracing().
+32> tr:trace([lists]), lists:seq(1, 10), tr:stop_tracing().
 ok
-31> tr:select().
+33> tr:select().
 [#tr{index = 1, pid = <0.175.0>, event = call,
      mfa = {lists, ukeysort, 2},
      data = [1,
@@ -542,7 +598,7 @@ ok
 You can dump a table to file with `tr:dump/1` - let's dump the `tmp` table:
 
 ```erlang
-32> tr:dump("tmp.ets").
+34> tr:dump("tmp.ets").
 ok
 ```
 

@@ -58,7 +58,11 @@ groups() ->
                   tb_tree,
                   tb_tree_longest,
                   tb_roots]},
-     {util, [do]},
+     {util, [contains,
+             match,
+             do,
+             next,
+             prev]},
      {call_stat, [simple_total,
                   tree_total,
                   simple_total_with_messages,
@@ -288,6 +292,24 @@ incomplete_ranges(_Config) ->
     %% Skip ranges with missing returns
     [[T1]] = tr:ranges(fun(#tr{}) -> true end, #{output => incomplete}).
 
+contains(_Config) ->
+    trace_fib3(),
+    Result = tr:filter(fun(T) -> tr:contains_data(1, T) end),
+    ?assertMatch([#tr{index = 3, event = call, data = [1]},
+                  #tr{index = 4, event = return, data = 1},
+                  #tr{index = 7, event = return, data = 1},
+                  #tr{index = 8, event = call, data = [1]},
+                  #tr{index = 9, event = return, data = 1}], Result),
+    ?assertEqual(Result, tr:filter(fun(#tr{data = Data}) -> tr:contains_val(1, Data) end)).
+
+match(_Config) ->
+    trace_fib3(),
+    Pred = fun([N]) -> N > 1 end,
+    Result = tr:filter(fun(T) -> tr:match_data(Pred, T) end),
+    ?assertMatch([#tr{index = 1, event = call, data = [3]},
+                  #tr{index = 2, event = call, data = [2]}], Result),
+    ?assertEqual(Result, tr:filter(fun(#tr{data = Data}) -> tr:match_val(Pred, Data) end)).
+
 do(_Config) ->
     tr:trace([{?MODULE, fib, 1}]),
     ?MODULE:fib(2),
@@ -304,6 +326,36 @@ do(_Config) ->
     0 = tr:do(T4),
     1 = tr:do(1),
     0 = tr:do(4).
+
+next(_Config) ->
+    {P1, P2} = trace_interleaved(),
+    [T1 = #tr{index = 1, pid = P1, event = call},
+     T2 = #tr{index = 2, pid = P2, event = call},
+     T3 = #tr{index = 3, pid = P1, event = return},
+     T4 = #tr{index = 4, pid = P2, event = return}] = tr:select(),
+    ?assertEqual(T2, tr:next(T1)),
+    ?assertEqual(T2, tr:next(1)),
+    ?assertEqual(T3, tr:seq_next(T1)),
+    ?assertEqual(T3, tr:seq_next(1)),
+    Pred = fun(#tr{pid = P, event = return}) -> P =/= P1 end,
+    ?assertEqual(T4, tr:next(T1, #{pred => Pred})),
+    ?assertEqual(T4, tr:next(1, #{pred => Pred})),
+    ?assertError(not_found, tr:next(T4)).
+
+prev(_Config) ->
+    {P1, P2} = trace_interleaved(),
+    [T1 = #tr{index = 1, pid = P1, event = call},
+     T2 = #tr{index = 2, pid = P2, event = call},
+     T3 = #tr{index = 3, pid = P1, event = return},
+     T4 = #tr{index = 4, pid = P2, event = return}] = tr:select(),
+    ?assertEqual(T3, tr:prev(T4)),
+    ?assertEqual(T3, tr:prev(4)),
+    ?assertEqual(T2, tr:seq_prev(T4)),
+    ?assertEqual(T2, tr:seq_prev(4)),
+    Pred = fun(#tr{pid = P, event = call}) -> P =/= P2 end,
+    ?assertEqual(T1, tr:prev(T4, #{pred => Pred})),
+    ?assertEqual(T1, tr:prev(4, #{pred => Pred})),
+    ?assertError(not_found, tr:prev(T1)).
 
 single_tb(_Config) ->
     tr:trace([{?MODULE, fib, 1}]),
@@ -544,24 +596,14 @@ acc_and_own_for_indirect_recursion(_Config) ->
     ?assertEqual(OwnF2, (T3 - T2) + (T5 - T4) + (T7 - T6) + (T9 - T8)).
 
 interleave(_Config) ->
-    tr:trace([?MODULE]),
-    Self = self(),
-    P1 = spawn_link(?MODULE, wait_and_reply, [Self]),
-    receive {started, P1} -> ok end,
-    P2 = spawn_link(?MODULE, wait_and_reply, [Self]),
-    receive {started, P2} -> ok end,
-    P1 ! reply,
-    receive {finished, P1} -> ok end,
-    P2 ! reply,
-    receive {finished, P2} -> ok end,
-    wait_for_traces(4),
-    tr:stop_tracing(),
+    {P1, P2} = trace_interleaved(),
     [#tr{pid = P1, event = call, ts = T1},
      #tr{pid = P2, event = call, ts = T2},
      #tr{pid = P1, event = return, ts = T3},
      #tr{pid = P2, event = return, ts = T4}] = ets:tab2list(trace),
     Stat = tr:sorted_call_stat(fun(#tr{mfa = {_, F, _}, data = Data}) -> {F, Data} end),
     ct:pal("Stat: ~p~n", [Stat]),
+    Self = self(),
     [{{wait_and_reply, [Self]}, 2, DT, DT}] = Stat,
     ?assertEqual(DT, (T3 - T1) + (T4 - T2)).
 
@@ -664,6 +706,21 @@ trace_wait_and_reply() ->
      #tr{index = 4, pid = Pid, event = send, data = {finished, Pid}, info = {Self, true}},
      #tr{index = 5, pid = Pid, event = return, mfa = MFA, data = {finished, Pid}}
     ] = tr:select().
+
+trace_interleaved() ->
+    tr:trace([?MODULE]),
+    Self = self(),
+    P1 = spawn_link(?MODULE, wait_and_reply, [Self]),
+    receive {started, P1} -> ok end,
+    P2 = spawn_link(?MODULE, wait_and_reply, [Self]),
+    receive {started, P2} -> ok end,
+    P1 ! reply,
+    receive {finished, P1} -> ok end,
+    P2 ! reply,
+    receive {finished, P2} -> ok end,
+    wait_for_traces(4),
+    tr:stop_tracing(),
+    {P1, P2}.
 
 factorial(N) when N > 0 -> N * factorial(N - 1);
 factorial(0) -> 1.
