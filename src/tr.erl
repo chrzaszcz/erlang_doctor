@@ -306,7 +306,7 @@ set_tab(Tab) when is_atom(Tab) ->
 
 %% @doc Loads an ETS trace table from a file, and makes it the current table.
 %%
-%% Overwrites the current table if it exists.
+%% Overwrites the current table if it is empty.
 -spec load(file:name_all()) -> {ok, table()} | {error, any()}.
 load(File) when is_binary(File) ->
     load(binary_to_list(File));
@@ -566,15 +566,18 @@ handle_call({dump, File}, _From, State = #{tab := Tab}) ->
     Reply = ets:tab2file(Tab, File),
     {reply, Reply, State};
 handle_call({load, File}, _From, State) ->
-    case ets:info(maps:get(tab, State), id) of
-        undefined ->
-            ok;
+    Tab = maps:get(tab, State),
+    Reply = case {ets:info(Tab, id), ets:info(Tab, size)} of
+        {undefined, _} ->
+            ets:file2tab(File);
+        {_, 0} ->
+            ets:delete(Tab),
+            ets:file2tab(File);
         _ ->
-            ets:delete(maps:get(tab, State))
+            {error, {non_empty_trace_table, Tab}}
     end,
-    Reply = ets:file2tab(File),
     NewState = case Reply of
-                   {ok, Tab} -> State#{tab := Tab, index := index(Tab)};
+                   {ok, NewTab} -> State#{tab := NewTab, index := index(NewTab)};
                    _ -> State
                end,
     {reply, Reply, NewState};
