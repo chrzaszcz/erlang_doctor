@@ -583,8 +583,8 @@ next(#tr{index = Index}, Options) ->
 
 -spec next(index(), pred(tr()), table()) -> tr().
 next(Index, Pred, Tab) ->
-    case ets:next_lookup(Tab, Index) of
-        {NextIndex, [NextT]} ->
+    case ets:lookup(Tab, ets:next(Tab, Index)) of
+        [NextT = #tr{index = NextIndex}] ->
             case catch Pred(NextT) of
                 true -> NextT;
                 _ -> next(NextIndex, Pred, Tab)
@@ -619,8 +619,8 @@ prev(#tr{index = Index}, Options) ->
 
 -spec prev(index(), pred(tr()), table()) -> tr().
 prev(Index, Pred, Tab) ->
-    case ets:prev_lookup(Tab, Index) of
-        {PrevIndex, [PrevT]} ->
+    case ets:lookup(Tab, ets:prev(Tab, Index)) of
+        [PrevT = #tr{index = PrevIndex}] ->
             case catch Pred(PrevT) of
                 true -> PrevT;
                 _ -> prev(PrevIndex, Pred, Tab)
