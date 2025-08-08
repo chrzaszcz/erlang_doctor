@@ -1,9 +1,10 @@
-%%%-------------------------------------------------------------------
-%% @doc erlang_doctor top level supervisor.
-%% @end
-%%%-------------------------------------------------------------------
-
 -module(erlang_doctor_sup).
+-if(?OTP_RELEASE >= 27).
+-define(MODULEDOC(Str), -moduledoc(Str)).
+-else.
+-define(MODULEDOC(Str), -compile([])).
+-endif.
+?MODULEDOC(false).
 
 -behaviour(supervisor).
 
@@ -17,6 +18,7 @@
 
 %% API functions
 
+-spec start_link() -> supervisor:startlink_ret().
 start_link() ->
     supervisor:start_link({local, ?SERVER}, ?MODULE, []).
 

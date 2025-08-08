@@ -1,9 +1,10 @@
-%%%-------------------------------------------------------------------
-%% @doc erlang_doctor public API
-%% @end
-%%%-------------------------------------------------------------------
-
 -module(erlang_doctor_app).
+-if(?OTP_RELEASE >= 27).
+-define(MODULEDOC(Str), -moduledoc(Str)).
+-else.
+-define(MODULEDOC(Str), -compile([])).
+-endif.
+?MODULEDOC(false).
 
 -behaviour(application).
 
