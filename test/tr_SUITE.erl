@@ -183,7 +183,7 @@ single_pid_with_msg(_Config) ->
 msg_after_traced_call(_Config) ->
     Pid = spawn_link(fun ?MODULE:async_factorial/0),
     MFA = {?MODULE, factorial, 1},
-    tr:trace(#{modules => [MFA], msg => all}),
+    tr:trace(#{modules => [MFA], pids => [Pid], msg => all}),
     Self = self(),
     Pid ! {do_factorial, 0, Self},
     receive {ok, _} -> ok end,
@@ -693,8 +693,9 @@ trace_fib3() ->
 
 trace_wait_and_reply() ->
     Self = self(),
-    tr:trace(#{modules => [MFA = {?MODULE, wait_and_reply, 1}], msg => all}),
-    Pid = spawn_link(?MODULE, wait_and_reply, [self()]),
+    Pid = spawn_wait_and_reply(self()),
+    tr:trace(#{modules => [MFA = {?MODULE, wait_and_reply, 1}], pids => [Pid], msg => all}),
+    Pid ! start,
     receive {started, Pid} -> ok end,
     Pid ! reply,
     receive {finished, Pid} -> ok end,
@@ -758,6 +759,12 @@ factorial_helper(N) -> N * factorial_with_helper(N - 1).
 fib(N) when N > 1 -> fib(N - 1) + fib(N - 2);
 fib(1) -> 1;
 fib(0) -> 0.
+
+spawn_wait_and_reply(Sender) ->
+    spawn_link(fun() ->
+                   receive start -> ok end,
+                   wait_and_reply(Sender)
+               end).
 
 wait_and_reply(Sender) ->
     Sender ! {started, self()},
