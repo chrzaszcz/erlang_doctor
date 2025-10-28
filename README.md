@@ -457,7 +457,7 @@ The simplest way to use this function is to look at the total number of calls an
 To do this, we group all calls under one key, e.g. `total`:
 
 ```erlang
-20> tr:call_stat(fun(_) -> total end).
+21> tr:call_stat(fun(_) -> total end).
 #{total => {4,7216,7216}}
 ```
 
@@ -470,7 +470,7 @@ For nested calls we only take into account the outermost call, so this means tha
 Let's see how this looks like for individual steps - we can group the stats by the function argument:
 
 ```erlang
-21> tr:call_stat(fun(#tr{data = [N]}) -> N end).
+22> tr:call_stat(fun(#tr{data = [N]}) -> N end).
 #{0 => {1,1952,1952},
   1 => {1,3983,2031},
   2 => {1,5764,1781},
@@ -480,7 +480,7 @@ Let's see how this looks like for individual steps - we can group the stats by t
 You can use the provided function to do filtering as well:
 
 ```erlang
-22> tr:call_stat(fun(#tr{data = [N]}) when N < 3 -> N end).
+23> tr:call_stat(fun(#tr{data = [N]}) when N < 3 -> N end).
 #{0 => {1,1952,1952},1 => {1,3983,2031},2 => {1,5764,1781}}
 ```
 
@@ -489,7 +489,7 @@ You can use the provided function to do filtering as well:
 You can sort the call stat by accumulated time (descending) with `tr:sorted_call_stat/1`:
 
 ```erlang
-23> tr:sorted_call_stat(fun(#tr{data = [N]}) -> N end).
+24> tr:sorted_call_stat(fun(#tr{data = [N]}) -> N end).
 [{3,1,7216,1452},
  {2,1,5764,1781},
  {1,1,3983,2031},
@@ -501,7 +501,7 @@ To pretty-print it, use `tr:print_sorted_call_stat/2`.
 The second argument limits the table row number, e.g. we can only print the top 3 items:
 
 ```erlang
-24> tr:print_sorted_call_stat(fun(#tr{data = [N]}) -> N end, 3).
+25> tr:print_sorted_call_stat(fun(#tr{data = [N]}) -> N end, 3).
 3  1  7216  1452
 2  1  5764  1781
 1  1  3983  2031
@@ -518,20 +518,20 @@ As an example, let's trace the call to a function which calculates the 4th eleme
 in a recursive way. The `trace` table should be empty, so let's clean it up first:
 
 ```erlang
-25> tr:clean().
+26> tr:clean().
 ok
-26> tr:trace([tr_SUITE]).
+27> tr:trace([tr_SUITE]).
 ok
-27> tr_SUITE:fib(4).
+28> tr_SUITE:fib(4).
 3
-28> tr:stop_tracing().
+29> tr:stop_tracing().
 ok
 ```
 
 Now it is possible to print the most time consuming call trees that repeat at least twice:
 
 ```erlang
-29> tr:top_call_trees().
+30> tr:top_call_trees().
 [{13,2,
   #node{module = tr_SUITE,function = fib,
         args = [2],
@@ -569,23 +569,23 @@ As an exercise, try calling `tr:top_call_trees(#{min_count => 1000})` for `fib(2
 To get the current table name, use `tr:tab/0`:
 
 ```erlang
-30> tr:tab().
+31> tr:tab().
 trace
 ```
 
 To switch to a new table, use `tr:set_tab/1`. The table need not exist.
 
 ```erlang
-31> tr:set_tab(tmp).
+32> tr:set_tab(tmp).
 ok
 ```
 
 Now you can collect traces to the new table without changing the original one.
 
 ```erlang
-32> tr:trace([lists]), lists:seq(1, 10), tr:stop_tracing().
+33> tr:trace([lists]), lists:seq(1, 10), tr:stop_tracing().
 ok
-33> tr:select().
+34> tr:select().
 [#tr{index = 1, pid = <0.175.0>, event = call,
      mfa = {lists, ukeysort, 2},
      data = [1,
@@ -598,7 +598,7 @@ ok
 You can dump a table to file with `tr:dump/1` - let's dump the `tmp` table:
 
 ```erlang
-34> tr:dump("tmp.ets").
+35> tr:dump("tmp.ets").
 ok
 ```
 
