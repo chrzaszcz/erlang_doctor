@@ -350,7 +350,7 @@ Possible [options](https://hexdocs.pm/erlang_doctor/0.3.1/tr.html#t:tb_options/0
 - `order` - `top_down` (default), `bottom_up` - call order in each tracaback; only for the `list` format.
 - `limit` - positive integer or `infinity` (default) - limits the number of matched traces. The actual number of tracebacks returned can be smaller unless `output => all`
 
-There are also functions `tr:traceback/1` and `tr:traceback/2`. They set `limit` to one and return only one trace if it exists. The options for `tr:traceback/2` are the same as for `tr:traceback/2` except `limit` and `format` (which are not supported). Additionally, it is possible to pass a [`tr`](https://hexdocs.pm/erlang_doctor/0.3.1/tr.html#t:tr/0) record (or an index) as the first argument to `tr:traceback/1` or `tr:traceback/2` to obtain the traceback for the provided trace event.
+There are also functions `tr:traceback/1` and `tr:traceback/2`. They set `limit` to one and return only one trace if it exists. The options for `tr:traceback/2` are the same as for `tr:traceback/2` except `limit`. Additionally, it is possible to pass a [`tr`](https://hexdocs.pm/erlang_doctor/0.3.1/tr.html#t:tr/0) record (or an index) as the first argument to `tr:traceback/1` or `tr:traceback/2` to obtain the traceback for the provided trace event.
 
 ### Trace ranges for filtered traces: `ranges`
 

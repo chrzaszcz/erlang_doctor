@@ -379,25 +379,25 @@ traceback(Pred) ->
 %% @doc Returns traceback of the first matching trace from {@link tr_source()}.
 %%
 %% Fails if no trace is matched.
-%% The options `limit' and `format' do not apply.
--spec traceback(pred(tr()) | index() | tr(), tb_options()) -> [tr()].
+%% The `limit' option does not apply.
+-spec traceback(pred(tr()) | index() | tr(), tb_options()) -> [tr()] | tr() | tb_tree().
 traceback(Index, Options) when is_integer(Index) ->
     traceback(fun(#tr{index = I}) -> Index =:= I end, Options);
 traceback(T = #tr{}, Options) ->
     traceback(fun(Tr) -> Tr =:= T end, Options);
 traceback(PredF, Options) when is_function(PredF, 1) ->
-    [TB] = tracebacks(PredF, Options#{limit => 1, format => list}),
-    TB.
+    [Result] = tracebacks(PredF, Options#{limit => 1}),
+    Result.
 
 %% @doc Returns tracebacks of all matching traces from `tab()'.
 %%
 %% @see tracebacks/2
--spec tracebacks(pred(tr())) -> [[tr()]] | [tb_tree()].
+-spec tracebacks(pred(tr())) -> [[tr()]].
 tracebacks(PredF) ->
     tracebacks(PredF, #{}).
 
 %% @doc Returns tracebacks of all matching traces from {@link tr_source()}.
--spec tracebacks(pred(tr()), tb_options()) -> [[tr()]] | [tb_tree()].
+-spec tracebacks(pred(tr()), tb_options()) -> [[tr()]] | [tr()] | [tb_tree()].
 tracebacks(PredF, Options) when is_map(Options) ->
     Tab = maps:get(tab, Options, tab()),
     Output = maps:get(output, Options, shortest),

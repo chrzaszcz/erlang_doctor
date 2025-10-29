@@ -55,9 +55,11 @@ groups() ->
                   tb_longest,
                   tb_all,
                   tb_all_limit,
+                  tb_trees,
                   tb_tree,
                   tb_tree_longest,
-                  tb_roots]},
+                  tb_roots,
+                  tb_root]},
      {util, [contains,
              match,
              do,
@@ -454,17 +456,28 @@ tb_all_limit(_Config) ->
                   [#tr{data = [0]}, #tr{data = [2]}, #tr{data = [3]}, #tr{data = [4]}],
                   [#tr{data = [2]}, #tr{data = [3]}, #tr{data = [4]}]], TBs).
 
-tb_tree(_Config) ->
+tb_trees(_Config) ->
     tr:trace([{?MODULE, fib, 1}]),
     ?MODULE:fib(4),
     wait_for_traces(18),
     tr:stop_tracing(),
     TBs = tr:tracebacks(fun(#tr{event = return, data = N}) when N < 2 -> true end,
-                               #{format => tree}),
+                        #{format => tree}),
     ct:pal("~p~n", [TBs]),
     ?assertMatch([{#tr{data = [4]}, [{#tr{data = [3]}, [#tr{data = [2]},
                                                         #tr{data = [1]}]},
-                                     #tr{data = [2]}]}], TBs).
+                                      #tr{data = [2]}]}], TBs).
+
+tb_tree(_Config) ->
+    tr:trace([{?MODULE, fib, 1}]),
+    ?MODULE:fib(4),
+    wait_for_traces(18),
+    tr:stop_tracing(),
+    TB = tr:traceback(fun(#tr{event = return, data = N}) when N < 2 -> true end,
+                          #{format => tree}),
+    ct:pal("~p~n", [TB]),
+    ?assertMatch({#tr{data = [4]}, [{#tr{data = [3]}, [{#tr{data = [2]},
+                                                        [#tr{data = [1]}]}]}]}, TB).
 
 tb_tree_longest(_Config) ->
     tr:trace([{?MODULE, fib, 1}]),
@@ -488,17 +501,27 @@ tb_roots(_Config) ->
     wait_for_traces(18),
     tr:stop_tracing(),
 
+    Pred = fun(#tr{event = return, data = N}) when N < 2 -> true end,
+
     %% Option 1: call root/1 or roots/1 on a tree
-    TBs = tr:tracebacks(fun(#tr{event = return, data = N}) when N < 2 -> true end,
-                               #{format => tree}),
+    TBs = tr:tracebacks(Pred, #{format => tree}),
     Roots = tr:roots(TBs),
     ct:pal("Roots: ~p~n", [Roots]),
     ?assertMatch([#tr{data = [4]}], Roots),
     ?assertEqual(hd(Roots), tr:root(hd(TBs))),
 
     %% Option 2: directly use the root format
-    ?assertEqual(Roots, tr:tracebacks(fun(#tr{event = return, data = N}) when N < 2 -> true end,
-                                      #{format => root})).
+    ?assertEqual(Roots, tr:tracebacks(Pred, #{format => root})).
+tb_root(_Config) ->
+    tr:trace([{?MODULE, fib, 1}]),
+    ?MODULE:fib(4),
+    wait_for_traces(18),
+    tr:stop_tracing(),
+
+    Pred = fun(#tr{event = return, data = N}) when N < 2 -> true end,
+
+    Root = tr:traceback(Pred, #{format => root}),
+    ?assertMatch(#tr{data = [4]}, Root).
 
 simple_total(_Config) ->
     tr:trace([{?MODULE, factorial, 1}]),
