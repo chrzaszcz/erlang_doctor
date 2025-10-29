@@ -69,13 +69,13 @@
 %%
 %% Record fields:
 %% <ul>
-%%  <li>`index' - `t:index()'</li>
-%%  <li>`pid' - process in which the traced event occurred, `t:erlang:pid()'</li>
+%%  <li>`index' - {@link index()}</li>
+%%  <li>`pid' - process in which the traced event occurred, {@link erlang:pid()}</li>
 %%  <li>`event' - `call', `return' or `exception' for function traces; `send' or `recv' for messages.</li>
-%%  <li>`mfa' - `t:erlang:mfa()' for function traces; `no_mfa' for messages.</li>
+%%  <li>`mfa' - {@link erlang:mfa()} for function traces; `no_mfa' for messages.</li>
 %%  <li>`data' - Argument list (for calls), returned value (for returns) or class and value (for exceptions).</li>
 %%  <li>`ts' - Timestamp in microseconds.</li>
-%%  <li>`info' - For `send' events it is a `t:recipient()' tuple; otherwise `no_info'.</li>
+%%  <li>`info' - For `send' events it is a {@link recipient()} tuple; otherwise `no_info'.</li>
 %% </ul>
 
 -type pred(T) :: fun((T) -> boolean()).
@@ -93,7 +93,7 @@
 -type own_time() :: non_neg_integer(). % Total own time (without other called functions).
 -type pids() :: [pid()] | all. % A list of processes to trace. Default: `all'.
 -type limit() :: pos_integer() | infinity. % Maximum number of items.
--type index() :: pos_integer(). % Unique, auto-incremented identifier of a `t:tr()' record.
+-type index() :: pos_integer(). % Unique, auto-incremented identifier of a {@link tr()} record.
 -type table() :: atom(). % ETS table name.
 -type mfargs() :: {module(), atom(), list()}. % Module, function and arguments.
 
@@ -221,8 +221,8 @@
 %%  <li>`module' - module name</li>
 %%  <li>`function' - function name</li>
 %%  <li>`args' - argument list</li>
-%%  <li>`children' - a list of child nodes, each of them being `t:tree()'</li>
-%%  <li>`result' - return value or exception, `t:result()'</li>
+%%  <li>`children' - a list of child nodes, each of them being {@link tree()}</li>
+%%  <li>`result' - return value or exception, {@link result()}</li>
 %% </ul>
 
 -type tree_item() :: {acc_time(), call_tree_count(), tree()}.
@@ -360,13 +360,13 @@ select(F, DataVal) ->
 filter(F) ->
     filter(F, tab()).
 
-%% @doc Returns matching traces from `t:tr_source()'.
+%% @doc Returns matching traces from {@link tr_source()}.
 -spec filter(pred(tr()), tr_source()) -> [tr()].
 filter(F, Tab) ->
     Traces = foldl(fun(Tr, State) -> filter_trace(F, Tr, State) end, [], Tab),
     lists:reverse(Traces).
 
-%% @doc Returns traceback of the first matching trace from `t:tr_source()'.
+%% @doc Returns traceback of the first matching trace from {@link tr_source()}.
 %%
 %% Matching can be done with a predicate function, an index value or a `tr' record.
 %% Fails if no trace is matched.
@@ -376,7 +376,7 @@ filter(F, Tab) ->
 traceback(Pred) ->
     traceback(Pred, #{}).
 
-%% @doc Returns traceback of the first matching trace from `t:tr_source()'.
+%% @doc Returns traceback of the first matching trace from {@link tr_source()}.
 %%
 %% Fails if no trace is matched.
 %% The options `limit' and `format' do not apply.
@@ -396,7 +396,7 @@ traceback(PredF, Options) when is_function(PredF, 1) ->
 tracebacks(PredF) ->
     tracebacks(PredF, #{}).
 
-%% @doc Returns tracebacks of all matching traces from `t:tr_source()'.
+%% @doc Returns tracebacks of all matching traces from {@link tr_source()}.
 -spec tracebacks(pred(tr()), tb_options()) -> [[tr()]] | [tb_tree()].
 tracebacks(PredF, Options) when is_map(Options) ->
     Tab = maps:get(tab, Options, tab()),
@@ -410,19 +410,19 @@ tracebacks(PredF, Options) when is_map(Options) ->
         foldl(fun(T, State) -> tb_step(PredF, T, State) end, InitialState, Tab),
     finalize_tracebacks(TBs, Output, Format, Options).
 
-%% @doc Returns the root call of each `t:tb_tree()' from the provided list.
+%% @doc Returns the root call of each {@link tb_tree()} from the provided list.
 -spec roots([tb_tree()]) -> [tr()].
 roots(Trees) ->
     lists:map(fun root/1, Trees).
 
-%% @doc Returns the root call of the provided `t:tb_tree()'.
+%% @doc Returns the root call of the provided {@link tb_tree()}.
 -spec root(tb_tree()) -> tr().
 root(#tr{} = T) -> T;
 root({#tr{} = T, _}) -> T.
 
 %% @doc Returns a list of traces from `tab()' between the first matched call and the corresponding return.
 %%
-%% Matching can be done with a predicate function, an index value or a `t:tr()' record.
+%% Matching can be done with a predicate function, an index value or a {@link tr()} record.
 %% Fails if no trace is matched.
 %%
 %% @see range/2
@@ -430,7 +430,7 @@ root({#tr{} = T, _}) -> T.
 range(PredF) ->
     range(PredF, #{}).
 
-%% @doc Returns a list of traces from `t:tr_source()' between the first matched call and the corresponding return.
+%% @doc Returns a list of traces from {@link tr_source()} between the first matched call and the corresponding return.
 %%
 %% Fails if no call is matched.
 -spec range(pred(tr()) | index() | tr(), range_options()) -> [tr()].
@@ -448,7 +448,7 @@ range(PredF, Options) when is_function(PredF, 1) ->
 ranges(PredF) ->
     ranges(PredF, #{}).
 
-%% @doc Returns lists of traces from `t:tr_source()' between matched calls and corresponding returns.
+%% @doc Returns lists of traces from {@link tr_source()} between matched calls and corresponding returns.
 -spec ranges(pred(tr()), range_options()) -> [[tr()]].
 ranges(PredF, Options) when is_map(Options) ->
     Tab = maps:get(tab, Options, tab()),
@@ -469,7 +469,7 @@ incomplete_ranges(#{pid_states := States}, Output) when Output =:= all; Output =
 
 %% @doc Prints sorted call time statistics for the selected traces from `tab()'.
 %%
-%% The statistics are sorted according to `t:acc_time()', descending.
+%% The statistics are sorted according to {@link acc_time()}, descending.
 %% Only top `Limit' rows are printed.
 %% @see sorted_call_stat/1
 -spec print_sorted_call_stat(selector(_), limit()) -> ok.
@@ -478,7 +478,7 @@ print_sorted_call_stat(KeyF, Limit) ->
 
 %% @doc Returns sorted call time statistics for the selected traces from `tab()'.
 %%
-%% The statistics are sorted according to `t:acc_time()', descending.
+%% The statistics are sorted according to {@link acc_time()}, descending.
 %% @see call_stat/1
 -spec sorted_call_stat(selector(Key)) -> [{Key, call_count(), acc_time(), own_time()}].
 sorted_call_stat(KeyF) ->
@@ -491,7 +491,7 @@ sorted_call_stat(KeyF) ->
 call_stat(KeyF) ->
     call_stat(KeyF, tab()).
 
-%% @doc Returns call time statistics for traces selected from `t:tr_source()'.
+%% @doc Returns call time statistics for traces selected from {@link tr_source()}.
 %%
 %% Calls are aggregated by `Key' returned by `KeyF'.
 -spec call_stat(selector(Key), tr_source()) -> #{Key => {call_count(), acc_time(), own_time()}}.
@@ -544,14 +544,14 @@ match_val(Pred, Val) ->
 contains_val(DataVal, Data) ->
     match_val(fun(Val) -> Val =:= DataVal end, Data).
 
-%% @doc Executes the function call for the provided `t:tr()' record or index.
+%% @doc Executes the function call for the provided {@link tr()} record or index.
 -spec do(tr()) -> term().
 do(Index) when is_integer(Index) ->
     do(lookup(Index));
 do(#tr{event = call, mfa = {M, F, Arity}, data = Args}) when length(Args) =:= Arity ->
     apply(M, F, Args).
 
-%% @doc Returns the `t:tr()' record from `tab()' for an index.
+%% @doc Returns the {@link tr()} record from `tab()' for an index.
 -spec lookup(index()) -> tr().
 lookup(Index) when is_integer(Index) ->
     [T] = ets:lookup(tab(), Index),
