@@ -28,8 +28,8 @@
          call_tree_stat/0, call_tree_stat/1,
          reduce_call_trees/1,
          top_call_trees/0, top_call_trees/1, top_call_trees/2,
-         print_sorted_call_stat/2,
-         sorted_call_stat/1,
+         print_sorted_call_stat/1, print_sorted_call_stat/2,
+         sorted_call_stat/1, sorted_call_stat/2,
          call_stat/1, call_stat/2]).
 
 %% API - utilities
@@ -180,6 +180,18 @@
 -type tb_acc_tree() :: [{tr(), tb_acc_tree()}].
 -type tb_acc_list() :: [[tr()]].
 -type tb_acc() :: tb_acc_tree() | tb_acc_list().
+
+-type sorted_call_stat_options() :: #{sort_by => call_stat_field(),
+                                      order => order(),
+                                      limit => limit()}.
+%% Options for sorted call statistics.
+%%
+%% `sort_by' is the field to sort by (default: `acc_time').
+%% `order' is ascending or descending (default: `desc').
+%% `limit' is the maximum number of rows returned (default: `infinity').
+
+-type order() :: asc | desc.
+-type call_stat_field() :: count | acc_time | own_time.
 
 -type call() :: {call, {module(), atom(), list()}}.
 -type result() :: {return | exception, any()}. % Result of a function call.
@@ -467,22 +479,44 @@ incomplete_ranges(#{}, complete) ->
 incomplete_ranges(#{pid_states := States}, Output) when Output =:= all; Output =:= incomplete ->
     lists:sort([Range || #{trace := Range} <- maps:values(States)]).
 
-%% @doc Prints sorted call time statistics for the selected traces from `tab()'.
+-spec print_sorted_call_stat(selector(_)) -> ok.
+print_sorted_call_stat(KeyF) ->
+    pretty_print_tuple_list(sorted_call_stat(KeyF)).
+
+%% @doc Prints sorted function call statistics for the selected traces from `tab()'.
 %%
 %% The statistics are sorted according to {@link acc_time()}, descending.
 %% Only top `Limit' rows are printed.
 %% @see sorted_call_stat/1
--spec print_sorted_call_stat(selector(_), limit()) -> ok.
-print_sorted_call_stat(KeyF, Limit) ->
-    pretty_print_tuple_list(sorted_call_stat(KeyF), Limit).
+-spec print_sorted_call_stat(selector(_), sorted_call_stat_options()) -> ok.
+print_sorted_call_stat(KeyF, Options) ->
+    pretty_print_tuple_list(sorted_call_stat(KeyF, Options)).
 
-%% @doc Returns sorted call time statistics for the selected traces from `tab()'.
+%% @doc Returns sorted function call statistics for the selected traces from `tab()'.
 %%
 %% The statistics are sorted according to {@link acc_time()}, descending.
 %% @see call_stat/1
+%% @see sorted_call_stat/2
 -spec sorted_call_stat(selector(Key)) -> [{Key, call_count(), acc_time(), own_time()}].
 sorted_call_stat(KeyF) ->
-    lists:reverse(sort_by_time(call_stat(KeyF))).
+    sorted_call_stat(KeyF, #{}).
+
+%% @doc Returns sorted function call statistics for the selected traces from `tab()'.
+%%
+%% The results can be sorted by call count or acc/own time, descending or ascending.
+-spec sorted_call_stat(selector(Key), sorted_call_stat_options()) ->
+    [{Key, call_count(), acc_time(), own_time()}].
+sorted_call_stat(KeyF, Options) ->
+    SortBy = maps:get(sort_by, Options, acc_time),
+    Stat = sort_call_stat(SortBy, call_stat(KeyF)),
+    OrderedStat = case maps:get(order, Options, desc) of
+                      asc -> Stat;
+                      desc -> lists:reverse(Stat)
+                  end,
+    case maps:get(limit, Options, infinity) of
+        infinity -> OrderedStat;
+        Limit when is_integer(Limit), Limit > 0 -> lists:sublist(OrderedStat, Limit)
+    end.
 
 %% @doc Returns call time statistics for traces selected from `tab()'.
 %%
@@ -1018,8 +1052,15 @@ filter_range(_PrefF, #tr{event = Event}, _State, _MaxDepth) when ?is_msg(Event) 
 
 %% Call stat
 
-sort_by_time(MapStat) ->
-    lists:keysort(3, [{Key, Count, AccTime, OwnTime} || {Key, {Count, AccTime, OwnTime}} <- maps:to_list(MapStat)]).
+-spec sort_call_stat(call_stat_field(), #{Key => {call_count(), acc_time(), own_time()}}) ->
+    [{Key, call_count(), acc_time(), own_time()}].
+sort_call_stat(SortBy, MapStat) ->
+    Rows = [{Key, Count, AccTime, OwnTime} || {Key, {Count, AccTime, OwnTime}} <- maps:to_list(MapStat)],
+    lists:keysort(sort_by_pos(SortBy), Rows).
+
+sort_by_pos(count) -> 2;
+sort_by_pos(acc_time) -> 3;
+sort_by_pos(own_time) -> 4.
 
 call_stat_step(_KeyF, #tr{event = Event}, State) when ?is_msg(Event) ->
     State;
@@ -1258,10 +1299,9 @@ foldl(F, InitialState, Tab) -> ets:foldl(F, InitialState, Tab).
 maybe_length(L) when is_list(L) -> length(L);
 maybe_length(I) when is_integer(I) -> I.
 
-pretty_print_tuple_list(TList, MaxRows) ->
-    Head = lists:sublist(TList, MaxRows),
-    MaxSize = lists:max([tuple_size(T) || T <- Head]),
-    L = [pad([lists:flatten(io_lib:format("~p", [Item])) || Item <- tuple_to_list(T)], MaxSize) || T <- Head],
+pretty_print_tuple_list(TList) ->
+    MaxSize = lists:max([tuple_size(T) || T <- TList]),
+    L = [pad([lists:flatten(io_lib:format("~p", [Item])) || Item <- tuple_to_list(T)], MaxSize) || T <- TList],
     Widths = lists:foldl(fun(T, CurWidths) ->
                                  [max(W, length(Item)+2) || {W, Item} <- lists:zip(CurWidths, T)]
                          end, lists:duplicate(MaxSize, 2), L),

@@ -432,7 +432,7 @@ When there is no trace to return, `not_found` error is raised:
         called as tr:prev(1,#Fun<tr.15.31036569>,trace)
 ```
 
-There are also more advanced variants of these fucntions: `tr:next/2` and `tr:prev/2`.
+There are also more advanced variants of these functions: `tr:next/2` and `tr:prev/2`.
 As their second argument, they take a [map of options](https://hexdocs.pm/erlang_doctor/0.3.1/tr.html#t:prev_next_options/0), including:
 
 - `tab` is the table or list (like the second argument of `tr:filter/2`),
@@ -497,11 +497,21 @@ You can sort the call stat by accumulated time (descending) with `tr:sorted_call
 ```
 
 The first element of each tuple is the key, the rest is the same as above.
-To pretty-print it, use `tr:print_sorted_call_stat/2`.
-The second argument limits the table row number, e.g. we can only print the top 3 items:
+
+There is `tr:sorted_call_stat/2` as well.
+The second argument of this function is a [map of options](https://hexdocs.pm/erlang_doctor/0.3.1/tr.html#t:sorted_call_stat_options/0), including:
+
+- `sort_by` is the field to sort by: `count`, `acc_time` (default) or `own_time`.
+- `order` is `asc` or `desc` (default).
+- `limit` is the maximum number of rows returned: a positive integer or `infinity` (default).
+
+To pretty-print the statistics, use `tr:print_sorted_call_stat/1`.
+There is `tr:print_sorted_call_stat/2` as well with the same [map of options](https://hexdocs.pm/erlang_doctor/0.3.1/tr.html#t:sorted_call_stat_options/0) as `tr:sorted_call_stat/2`.
+
+For example, we can only print the top 3 items:
 
 ```erlang
-25> tr:print_sorted_call_stat(fun(#tr{data = [N]}) -> N end, 3).
+25> tr:print_sorted_call_stat(fun(#tr{data = [N]}) -> N end, #{limit => 3}).
 3  1  7216  1452
 2  1  5764  1781
 1  1  3983  2031
