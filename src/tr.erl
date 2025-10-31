@@ -479,15 +479,19 @@ incomplete_ranges(#{}, complete) ->
 incomplete_ranges(#{pid_states := States}, Output) when Output =:= all; Output =:= incomplete ->
     lists:sort([Range || #{trace := Range} <- maps:values(States)]).
 
+%% @doc Prints sorted function call statistics for the selected traces from `tab()'.
+%%
+%% The statistics are sorted according to {@link acc_time()}, descending.
+%% @see sorted_call_stat/1
+%% @see print_sorted_call_stat/2
 -spec print_sorted_call_stat(selector(_)) -> ok.
 print_sorted_call_stat(KeyF) ->
     pretty_print_tuple_list(sorted_call_stat(KeyF)).
 
 %% @doc Prints sorted function call statistics for the selected traces from `tab()'.
 %%
-%% The statistics are sorted according to {@link acc_time()}, descending.
-%% Only top `Limit' rows are printed.
-%% @see sorted_call_stat/1
+%% The results can be sorted by call count or acc/own time, descending or ascending.
+%% @see sorted_call_stat/2
 -spec print_sorted_call_stat(selector(_), sorted_call_stat_options()) -> ok.
 print_sorted_call_stat(KeyF, Options) ->
     pretty_print_tuple_list(sorted_call_stat(KeyF, Options)).
