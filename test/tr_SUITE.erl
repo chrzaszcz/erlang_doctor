@@ -74,7 +74,8 @@ groups() ->
                   dump_and_load,
                   interleave,
                   call_without_return,
-                  return_without_call]},
+                  return_without_call,
+                  sorted_call_stat_options]},
      {call_tree_stat, [top_call_trees,
                        top_call_trees_with_messages]}].
 
@@ -657,6 +658,42 @@ return_without_call(_Config) ->
     ct:pal("Stat: ~p~n", [Stat]),
     ?assertEqual([], Stat).
 
+sorted_call_stat_options(_Config) ->
+    Self = self(),
+    Pid = spawn_wait_and_reply(self()),
+    tr:trace([?MODULE]),
+    Pid ! start,
+    receive {started, Pid} -> ok end,
+    ?MODULE:sleepy_factorial(1),
+    ?MODULE:sleepy_factorial(1),
+    ?MODULE:sleepy_factorial(0),
+    Pid ! reply,
+    receive {finished, Pid} -> ok end,
+    wait_for_traces(12),
+    tr:stop_tracing(),
+    KeyF = fun(#tr{mfa = {_, F, _}, data = Data}) -> {F, Data} end,
+    Stat = tr:sorted_call_stat(KeyF),
+    [Wait, Fact1, Fact0] = Stat,
+    ct:pal("Stat: ~p~n", [Stat]),
+    {{wait_and_reply, [Self]}, 1, WaitT, WaitT} = Wait,
+    {{sleepy_factorial, [1]}, 2, Fact1AccT, Fact1OwnT} = Fact1,
+    {{sleepy_factorial, [0]}, 3, Fact0T, Fact0T} = Fact0,
+
+    %% Check that times are as expected
+    ?assert(WaitT > Fact1AccT), % sleepy_factorial(1) sleeps 4x (acc)
+    ?assert(Fact1AccT > Fact0T), % sleepy_factorial(0) sleeps 3x (acc/own)
+    ?assert(Fact0T > Fact1OwnT), % sleepy_factorial(1) sleeps 2x (own)
+
+    %% Defaults
+    ?assertEqual(Stat, tr:sorted_call_stat(KeyF, #{order => desc})),
+    ?assertEqual(Stat, tr:sorted_call_stat(KeyF, #{sort_by => acc_time})),
+
+    %% Other sorting options
+    ?assertEqual([Fact0, Fact1, Wait], tr:sorted_call_stat(KeyF, #{sort_by => count})),
+    ?assertEqual([Wait, Fact1, Fact0], tr:sorted_call_stat(KeyF, #{sort_by => count, order => asc})),
+    ?assertEqual([Wait, Fact0, Fact1], tr:sorted_call_stat(KeyF, #{sort_by => own_time})),
+    ?assertEqual([Fact1, Fact0, Wait], tr:sorted_call_stat(KeyF, #{sort_by => own_time, order => asc})).
+
 dump_and_load(_Config) ->
     DumpFile = "dump",
     tr:trace([{?MODULE, factorial, 1}]),
@@ -716,7 +753,7 @@ trace_fib3() ->
 
 trace_wait_and_reply() ->
     Self = self(),
-    Pid = spawn_wait_and_reply(self()),
+    Pid = spawn_wait_and_reply(Self),
     tr:trace(#{modules => [MFA = {?MODULE, wait_and_reply, 1}], pids => [Pid], msg => all}),
     Pid ! start,
     receive {started, Pid} -> ok end,
