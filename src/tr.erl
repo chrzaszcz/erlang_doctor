@@ -295,7 +295,8 @@ trace(Modules) when is_list(Modules) ->
 trace(Opts) ->
     DefaultOpts = #{modules => [], pids => all,
                     msg => none, msg_trigger => after_traced_call},
-    gen_server:call(?MODULE, {start_trace, call, maps:merge(DefaultOpts, Opts)}).
+    Timeout = timer:minutes(1),
+    gen_server:call(?MODULE, {start_trace, call, maps:merge(DefaultOpts, Opts)}, Timeout).
 
 %% @doc Starts tracing of the specified functions/modules in specific processes.
 -spec trace(module_spec(), pids()) -> ok | {error, already_tracing}.
@@ -307,7 +308,8 @@ trace(Modules, Pids) ->
 %% Any future messages from the Erlang tracer will be ignored.
 -spec stop_tracing() -> ok | {error, not_tracing}.
 stop_tracing() ->
-    gen_server:call(?MODULE, {stop_trace, call}).
+    Timeout = timer:minutes(1),
+    gen_server:call(?MODULE, {stop_trace, call}, Timeout).
 
 %% @doc Stops the whole `tr' server process.
 -spec stop() -> ok.
