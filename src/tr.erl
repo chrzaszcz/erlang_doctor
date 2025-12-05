@@ -376,8 +376,13 @@ filter(F) ->
 
 %% @doc Returns matching traces from {@link tr_source()}.
 -spec filter(pred(tr()), tr_source()) -> [tr()].
-filter(F, Tab) ->
-    Traces = foldl(fun(Tr, State) -> filter_trace(F, Tr, State) end, [], Tab),
+filter(F, Source) when is_function(F, 1) -> filter_(F, Source);
+
+%% Allows for seamless piping in Elixir.
+filter(Source, F) when is_function(F, 1) -> filter_(F, Source).
+
+filter_(F, Source) ->
+    Traces = foldl(fun(Tr, State) -> filter_trace(F, Tr, State) end, [], Source),
     lists:reverse(Traces).
 
 %% @doc Returns traceback of the first matching trace from {@link tr_source()}.
@@ -534,9 +539,14 @@ call_stat(KeyF) ->
 %% @doc Returns call time statistics for traces selected from {@link tr_source()}.
 %%
 %% Calls are aggregated by `Key' returned by `KeyF'.
+%%
+%% In Elixir the order of parameters may be reversed to enable piping.
 -spec call_stat(selector(Key), tr_source()) -> #{Key => {call_count(), acc_time(), own_time()}}.
-call_stat(KeyF, Tab) ->
-    {#{}, State} = foldl(fun(Tr, State) -> call_stat_step(KeyF, Tr, State) end, {#{}, #{}}, Tab),
+call_stat(KeyF, Source) when is_function(KeyF, 1) -> call_stat_(KeyF, Source);
+call_stat(Source, KeyF) when is_function(KeyF, 1) -> call_stat_(KeyF, Source).
+
+call_stat_(KeyF, Source) ->
+    {#{}, State} = foldl(fun(Tr, State) -> call_stat_step(KeyF, Tr, State) end, {#{}, #{}}, Source),
     State.
 
 %% API - utilities
