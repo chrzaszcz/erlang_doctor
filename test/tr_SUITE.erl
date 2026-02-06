@@ -40,7 +40,9 @@ groups() ->
                    duplicates]},
      {trace, [single_pid,
               single_pid_with_msg,
-              msg_after_traced_call]},
+              msg_after_traced_call,
+              new_children_first,
+              new_children_all]},
      {range, [ranges,
               ranges_max_depth,
               range,
@@ -199,6 +201,68 @@ msg_after_traced_call(_Config) ->
      #tr{index = 2, event = return, mfa = MFA, pid = Pid, data = 1},
      #tr{index = 3, event = send, pid = Pid, data = {ok, 1}, info = {Self, true}},
      #tr{index = 4, event = recv, pid = Pid, data = stop}] = tr:select().
+
+new_children_first(_Config) ->
+    %% Start a parent process before tracing
+    Parent = self(),
+    ParentPid = spawn_link(fun() -> spawner_loop(Parent) end),
+    receive {spawner_ready, ParentPid} -> ok end,
+
+    %% Trace only the parent with new_children => first
+    MFA = {?MODULE, traced_child_fun, 1},
+    tr:trace(#{modules => [MFA], pids => [ParentPid], new_children => first}),
+
+    %% Spawn two children from the parent - only the first should be traced
+    ParentPid ! {spawn_child, 1},
+    Child1 = receive {child_spawned, Ch1, 1} -> Ch1 end,
+    ParentPid ! {spawn_child, 2},
+    Child2 = receive {child_spawned, Ch2, 2} -> Ch2 end,
+
+    %% Wait for traces - only 2 traces from the first child (call + return)
+    wait_for_traces(2),
+    tr:stop_tracing(),
+
+    %% Clean up
+    ParentPid ! stop,
+
+    %% Verify only the first child's traces are collected
+    [#tr{index = 1, event = call, mfa = MFA, pid = Child1, data = [1]},
+     #tr{index = 2, event = return, mfa = MFA, pid = Child1, data = 1}] = tr:select(),
+
+    %% Verify Child2 is different from Child1
+    ?assertNotEqual(Child1, Child2).
+
+new_children_all(_Config) ->
+    %% Start a parent process before tracing
+    Parent = self(),
+    ParentPid = spawn_link(fun() -> spawner_loop(Parent) end),
+    receive {spawner_ready, ParentPid} -> ok end,
+
+    %% Trace only the parent with new_children => all
+    MFA = {?MODULE, traced_child_fun, 1},
+    tr:trace(#{modules => [MFA], pids => [ParentPid], new_children => all}),
+
+    %% Spawn two children from the parent - both should be traced
+    ParentPid ! {spawn_child, 1},
+    Child1 = receive {child_spawned, Ch1, 1} -> Ch1 end,
+    ParentPid ! {spawn_child, 2},
+    Child2 = receive {child_spawned, Ch2, 2} -> Ch2 end,
+
+    %% Wait for traces - 4 traces total (2 from each child)
+    wait_for_traces(4),
+    tr:stop_tracing(),
+
+    %% Clean up
+    ParentPid ! stop,
+
+    %% Verify both children's traces are collected
+    [#tr{index = 1, event = call, mfa = MFA, pid = Child1, data = [1]},
+     #tr{index = 2, event = return, mfa = MFA, pid = Child1, data = 1},
+     #tr{index = 3, event = call, mfa = MFA, pid = Child2, data = [2]},
+     #tr{index = 4, event = return, mfa = MFA, pid = Child2, data = 2}] = tr:select(),
+
+    %% Verify Child2 is different from Child1
+    ?assertNotEqual(Child1, Child2).
 
 ranges(_Config) ->
     Traces = trace_fib3(),
@@ -835,3 +899,24 @@ log(#{msg := {Format, Args}, level := Level}, #{config := Pid}) ->
     Pid ! {Level, lists:flatten(io_lib:format(Format, Args))};
 log(_Event, _Config) ->
     ok.
+
+%% Helper for new_children tests
+spawner_loop(Parent) ->
+    Parent ! {spawner_ready, self()},
+    spawner_loop_ready(Parent).
+
+spawner_loop_ready(Parent) ->
+    receive
+        {spawn_child, Id} ->
+            Child = spawn_link(fun() ->
+                                   ?MODULE:traced_child_fun(Id),
+                                   receive after infinity -> ok end
+                               end),
+            Parent ! {child_spawned, Child, Id},
+            spawner_loop_ready(Parent);
+        stop ->
+            ok
+    end.
+
+traced_child_fun(N) ->
+    N.
