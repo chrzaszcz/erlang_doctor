@@ -66,7 +66,8 @@ groups() ->
              match,
              do,
              next,
-             prev]},
+             prev,
+             to_map]},
      {call_stat, [simple_total,
                   tree_total,
                   simple_total_with_messages,
@@ -423,6 +424,25 @@ prev(_Config) ->
     ?assertEqual(T1, tr:prev(T4, #{pred => Pred})),
     ?assertEqual(T1, tr:prev(4, #{pred => Pred})),
     ?assertError(not_found, tr:prev(T1)).
+
+to_map(_Config) ->
+    Pid = erlang:list_to_pid("<0.115.0>"),
+    Trace = #tr{index = 5,
+                pid = Pid,
+                event = call,
+                mfa = {lists,keyfind,3},
+                data = [syntax_colors,1,[]],
+                ts = 1766078114348924,
+                info = no_info},
+    ?assertEqual(#{record => tr,
+                   index => 5,
+                   pid => Pid,
+                   event => call,
+                   mfa => {lists,keyfind,3},
+                   data => [syntax_colors,1,[]],
+                   ts => 1766078114348924,
+                   info => no_info},
+                 tr:to_map(Trace)).
 
 single_tb(_Config) ->
     tr:trace([{?MODULE, fib, 1}]),
