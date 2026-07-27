@@ -1,7 +1,7 @@
 -module(tr_SUITE).
 -compile([export_all, nowarn_export_all]).
 
--include_lib("eunit/include/eunit.hrl").
+-include_lib("stdlib/include/assert.hrl").
 -include("tr.hrl").
 
 -import(tr_helper, [wait_for_traces/1]).
@@ -101,9 +101,9 @@ end_per_testcase(_TC, _Config) ->
     logger:remove_handler(?MODULE),
     case lists:keymember(erlang_doctor, 1, application:which_applications()) of
         false ->
-            catch tr:stop(); % cleanup in case of failed tests
+            try tr:stop() catch _:_ -> ok end; % cleanup in case of failed tests
         true ->
-            catch tr:stop_tracing(), % cleanup in case of failed tests
+            try tr:stop_tracing() catch _:_ -> ok end, % cleanup in case of failed tests
             tr:clean()
     end.
 
@@ -331,7 +331,8 @@ ranges_with_messages(_Config) ->
 
 incomplete_ranges(_Config) ->
     Self = self(),
-    tr:trace(#{modules => [MFA = {?MODULE, wait_and_reply, 1}]}),
+    MFA = {?MODULE, wait_and_reply, 1},
+    tr:trace(#{modules => [MFA]}),
     Pid1 = spawn_link(?MODULE, wait_and_reply, [self()]),
     Pid2 = spawn_link(?MODULE, wait_and_reply, [self()]),
     receive {started, Pid1} -> ok end,
@@ -657,7 +658,7 @@ acc_and_own_for_recursion(_Config) ->
 
 acc_and_own_for_recursion_with_exception(_Config) ->
     tr:trace([{?MODULE, bad_factorial, 1}]),
-    catch ?MODULE:bad_factorial(2),
+    ?assertError(_, ?MODULE:bad_factorial(2)),
     wait_for_traces(6),
     tr:stop_tracing(),
     Stat = tr:sorted_call_stat(fun(#tr{data = [Arg]}) -> Arg end),
@@ -820,7 +821,8 @@ top_call_trees_with_messages(_Config) ->
 %% Helpers
 
 trace_fib3() ->
-    tr:trace([MFA = {?MODULE, fib, 1}]),
+    MFA = {?MODULE, fib, 1},
+    tr:trace([MFA]),
     fib(3),
     wait_for_traces(10),
     tr:stop_tracing(),
@@ -838,7 +840,8 @@ trace_fib3() ->
 trace_wait_and_reply() ->
     Self = self(),
     Pid = spawn_wait_and_reply(Self),
-    tr:trace(#{modules => [MFA = {?MODULE, wait_and_reply, 1}], pids => [Pid], msg => all}),
+    MFA = {?MODULE, wait_and_reply, 1},
+    tr:trace(#{modules => [MFA], pids => [Pid], msg => all}),
     Pid ! start,
     receive {started, Pid} -> ok end,
     Pid ! reply,
