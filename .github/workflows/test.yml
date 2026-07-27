@@ -5,9 +5,11 @@ jobs:
   common-test:
     name: Run Common Test
     runs-on: ubuntu-latest
+    env:
+      ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
     strategy:
       matrix:
-        otp: [21, 22, 23, 24, 25, 26, 27, 28]
+        otp: [21, 22, 23, 24, 25, 26, 27, 28, 29]
     container:
       image: erlang:${{ matrix.otp }}-alpine
     steps:
