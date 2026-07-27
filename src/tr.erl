@@ -568,7 +568,7 @@ contains_data(DataVal, #tr{data = Data}) ->
 %% The matching values can occur in (possibly nested) tuples, maps or lists.
 -spec match_val(pred(T), T) -> boolean().
 match_val(Pred, Val) ->
-    case catch Pred(Val) of
+    case pred(Pred, Val) of
         true ->
             true;
         _ ->
@@ -633,7 +633,7 @@ next(#tr{index = Index}, Options) ->
 next(Index, Pred, Tab) ->
     case ets:lookup(Tab, ets:next(Tab, Index)) of
         [NextT = #tr{index = NextIndex}] ->
-            case catch Pred(NextT) of
+            case pred(Pred, NextT) of
                 true -> NextT;
                 _ -> next(NextIndex, Pred, Tab)
             end;
@@ -669,7 +669,7 @@ prev(#tr{index = Index}, Options) ->
 prev(Index, Pred, Tab) ->
     case ets:lookup(Tab, ets:prev(Tab, Index)) of
         [PrevT = #tr{index = PrevIndex}] ->
-            case catch Pred(PrevT) of
+            case pred(Pred, PrevT) of
                 true -> PrevT;
                 _ -> prev(PrevIndex, Pred, Tab)
             end;
@@ -808,7 +808,7 @@ select(MS, DataVal, DataAcc, {Matched, Cont}) ->
     select(MS, DataVal, [Filtered | DataAcc], SelectRes).
 
 filter_trace(F, T, State) ->
-    case catch F(T) of
+    case pred(F, T) of
         true -> [T | State];
         _ -> State
     end.
@@ -979,7 +979,7 @@ tb_step(PredF, T = #tr{pid = Pid, event = Event},
     CallStack = maps:get(Pid, CallStacks, []),
     NewStack = update_call_stack(T, CallStack),
     NewState = State#{call_stacks := CallStacks#{Pid => NewStack}},
-    case catch PredF(T) of
+    case pred(PredF, T) of
         true when Count < Limit ->
             TB = if Event =:= call -> NewStack;
                     ?is_return(Event) orelse ?is_msg(Event) -> CallStack
@@ -1058,7 +1058,7 @@ filter_range(_PredF, T = #tr{event = call}, State = #{depth := Depth, trace := T
 filter_range(_PredF, #tr{event = call}, State = #{depth := Depth, trace := Trace}, _) ->
     {incomplete, State#{depth => Depth + 1, trace => Trace}};
 filter_range(PredF, T = #tr{event = call}, no_state, _) ->
-    case catch PredF(T) of
+    case pred(PredF, T) of
         true -> {incomplete, #{depth => 1, trace => [T]}};
         _ -> none
     end;
@@ -1343,3 +1343,9 @@ pad(L, _) -> L.
 
 usec_from_now({MegaSecs, Secs, Usecs}) ->
     (MegaSecs * 1000000 + Secs) * 1000000 + Usecs.
+
+-spec pred(pred(T), T) -> boolean().
+pred(Pred, Arg) ->
+    try Pred(Arg)
+    catch _:_ -> false
+    end.
