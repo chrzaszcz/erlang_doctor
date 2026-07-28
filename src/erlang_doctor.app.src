@@ -1,6 +1,6 @@
 {application, erlang_doctor,
  [{description, "Lightweight tracing, debugging and profiling utility for Erlang"},
-  {vsn, "0.3.2"},
+  {vsn, "1.0.0"},
   {registered, []},
   {mod, { erlang_doctor_app, []}},
   {applications,
@@ -10,6 +10,6 @@
   {env, [{limit, infinity}]},
   {modules, []},
   {maintainers, []},
-  {licenses, ["Apache 2.0"]},
+  {licenses, ["Apache-2.0"]},
   {links, [{"GitHub", "https://github.com/chrzaszcz/erlang_doctor"}]}
  ]}.
