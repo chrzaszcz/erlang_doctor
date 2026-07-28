@@ -97,6 +97,7 @@ The `tr:trace/1` function accepts a [map of options](https://hexdocs.pm/erlang_d
 
 - `modules`: a list of module names or `{Module, Function, Arity}` tuples. The list is empty by default.
 - `pids`: a list of Pids of processes to trace, or the atom `all` (default) to trace all processes.
+- `new_children`: `none` (default), `all` or `first`. Allows to trace newly spawned children of `pids` - `all` of them or only the `first` one.
 - `msg`: `none` (default), `all`, `send` or `recv`. Specifies which message events will be traced. By default no messages are traced.
 - `msg_trigger`: `after_traced_call` (default) or `always`. By default, traced messages in each process are stored after the first traced function call in that process. The goal is to limit the number of traced messages, which can be huge in the entire Erlang system. If you want all messages, set it to `always`.
 
