@@ -191,7 +191,12 @@
 
 -type sorted_call_stat_options() :: #{sort_by => call_stat_field(),
                                       order => order(),
-                                      limit => limit()}.
+                                      limit => limit(),
+                                      tab => tr_source(),
+                                      count => complete | incomplete | return | exception | all}.
+-type call_stat_options() :: #{tab => tr_source(),
+                               count => complete | incomplete | return | exception | all}.
+
 %% Options for sorted call statistics.
 %%
 %% `sort_by' is the field to sort by (default: `acc_time').
@@ -522,7 +527,7 @@ sorted_call_stat(KeyF) ->
     [{Key, call_count(), acc_time(), own_time()}].
 sorted_call_stat(KeyF, Options) ->
     SortBy = maps:get(sort_by, Options, acc_time),
-    Stat = sort_call_stat(SortBy, call_stat(KeyF)),
+    Stat = sort_call_stat(SortBy, call_stat(KeyF, maps:with([tab, count], Options))),
     OrderedStat = case maps:get(order, Options, desc) of
                       asc -> Stat;
                       desc -> lists:reverse(Stat)
@@ -537,14 +542,16 @@ sorted_call_stat(KeyF, Options) ->
 %% @see call_stat/2
 -spec call_stat(selector(Key)) -> #{Key => {call_count(), acc_time(), own_time()}}.
 call_stat(KeyF) ->
-    call_stat(KeyF, tab()).
+    call_stat(KeyF, #{}).
 
 %% @doc Returns call time statistics for traces selected from {@link tr_source()}.
 %%
 %% Calls are aggregated by `Key' returned by `KeyF'.
--spec call_stat(selector(Key), tr_source()) -> #{Key => {call_count(), acc_time(), own_time()}}.
-call_stat(KeyF, Tab) ->
-    {#{}, State} = foldl(fun(Tr, State) -> call_stat_step(KeyF, Tr, State) end, {#{}, #{}}, Tab),
+-spec call_stat(selector(Key), call_stat_options()) -> #{Key => {call_count(), acc_time(), own_time()}}.
+call_stat(KeyF, Options) ->
+    Tab = maps:get(tab, Options, tab()),
+    CountOpt = maps:get(count, Options, all),
+    {#{}, State, CountOpt} = foldl(fun(Tr, State) -> call_stat_step(KeyF, Tr, State) end, {#{}, #{}, CountOpt}, Tab),
     State.
 
 %% API - utilities
@@ -1091,92 +1098,175 @@ sort_by_pos(own_time) -> 4.
 
 call_stat_step(_KeyF, #tr{event = Event}, State) when ?is_msg(Event) ->
     State;
-call_stat_step(KeyF, Tr = #tr{pid = Pid}, {ProcessStates, Stat}) ->
-    {LastTr, Stack, Depths} = maps:get(Pid, ProcessStates, {no_tr, [], #{}}),
-    {NewStack, Key} = get_key_and_update_stack(KeyF, Stack, Tr),
-    TSDepth = maps:get(Key, Depths, none),
-    NewDepths = set_ts_and_depth(Depths, Tr, Key, TSDepth),
-    ProcessStates1 = ProcessStates#{Pid => {Tr, NewStack, NewDepths}},
-    Stat1 = update_stat(Stat, LastTr, Tr, Key, TSDepth, Stack),
-    {ProcessStates1, Stat1}.
+call_stat_step(KeyF, Tr = #tr{pid = Pid}, {ProcessStates, Stat, CountOpt}) ->
+    PidState = {LastTr, Stack, KeyStates} = maps:get(Pid, ProcessStates, {no_tr, [], #{}}),
+    Key = get_key(KeyF, Stack, Tr, CountOpt),
+    {NewStack, OwnTime} = case CountOpt of
+                             all -> {update_stack(Key, Stack, Tr), 0};
+                             _ -> update_stack(Key, Stack, Tr, LastTr)
+                         end,
+    {NewKeyStates, AccTime} = case CountOpt of
+                                 all -> {update_depth(KeyStates, Tr, Key), 0};
+                                 _ -> update_key_times(KeyStates, Tr, Key, CountOpt)
+                             end,
+    ProcessStates1 = ProcessStates#{Pid => {Tr, NewStack, NewKeyStates}},
+    Stat1 = update_stat(Stat, Tr, Key, AccTime, OwnTime, PidState, CountOpt),
+    {ProcessStates1, Stat1, CountOpt}.
 
-get_key_and_update_stack(KeyF, Stack, T = #tr{event = call}) ->
-    Key = try KeyF(T)
-          catch _:_ -> no_key
-          end,
-    {[Key | Stack], Key};
-get_key_and_update_stack(_KeyF, [Key | Rest], #tr{event = Event}) when ?is_return(Event) ->
-    {Rest, Key};
-get_key_and_update_stack(_, [], #tr{event = Event, mfa = MFA}) when ?is_return(Event) ->
+get_key(_KeyF, [Key | _], #tr{event = Event}, all) when ?is_return(Event) ->
+    Key;
+get_key(KeyF, Stack, Tr, _CountOpt) ->
+    get_key(KeyF, Stack, Tr).
+
+get_key(KeyF, _Stack, T = #tr{event = call}) ->
+    try KeyF(T) catch _:_ -> no_key end;
+get_key(_KeyF, [no_key | _], #tr{event = Event}) when ?is_return(Event) ->
+    no_key;
+get_key(_KeyF, [{Key, _OwnTime} | _], #tr{event = Event}) when ?is_return(Event) ->
+    Key;
+get_key(_, [], #tr{event = Event, mfa = MFA}) when ?is_return(Event) ->
     {M, F, A} = mfarity(MFA),
     logger:warning("Found a return trace from ~p:~p/~p without a call trace", [M, F, A]),
-    {[], no_key}.
+    no_key.
 
-set_ts_and_depth(Depths, _, no_key, none) ->
+update_stack(Key, Stack, #tr{event = call}) ->
+    [Key | Stack];
+update_stack(_, [_ | Rest], #tr{event = Event}) when ?is_return(Event) ->
+    Rest;
+update_stack(_, [], #tr{event = Event}) when ?is_return(Event) ->
+    [].
+
+update_stack(Key, Stack, T = #tr{event = call}, LastTr) ->
+    NewStack = case Stack of
+                   [{ParentKey, OwnTime} | Rest] ->
+                       [{ParentKey, OwnTime + T#tr.ts - LastTr#tr.ts} | Rest];
+                   _ -> Stack
+               end,
+    case Key of
+        no_key -> {[no_key | NewStack], 0};
+        _ -> {[{Key, 0} | NewStack], 0}
+    end;
+update_stack(_Key, [no_key | Rest], #tr{event = Event}, _LastTr)
+  when ?is_return(Event) ->
+    {Rest, 0};
+update_stack(_Key, [{_, OwnTime} | Rest], #tr{event = Event, ts = TS}, #tr{ts = LastTS})
+  when ?is_return(Event) ->
+    {Rest, OwnTime + TS - LastTS};
+update_stack(_, [], #tr{event = Event}, _) when ?is_return(Event) ->
+    {[], 0}.
+
+%% Each key has a stack of {StartTS, KeyTime} entries for this process.
+%% KeyTime is the duration already reported for matching descendants of the same key.
+update_key_times(KeyTimes, _, no_key, _) ->
+    {KeyTimes, 0};
+update_key_times(KeyTimes, #tr{event = call, ts = TS}, Key, _) ->
+    Entries = maps:get(Key, KeyTimes, []),
+    {KeyTimes#{Key => [{TS, 0} | Entries]}, 0};
+update_key_times(KeyTimes, #tr{event = Event, ts = TS}, Key, CountOpt) when ?is_return(Event) ->
+    [{StartTS, KeyTime} | Rest] = maps:get(Key, KeyTimes),
+    Duration = TS - StartTS,
+    AccTime = acc_time_delta(Event, CountOpt, Duration, KeyTime, Rest =:= []),
+    NewRest = case Rest of
+                  [{ParentTS, ParentKT} | Tail] when CountOpt =/= incomplete ->
+                      [{ParentTS, ParentKT + KeyTime + AccTime} | Tail];
+                  _ -> Rest
+              end,
+    NewKeyTimes = case NewRest of
+                      [] -> maps:remove(Key, KeyTimes);
+                      _ -> KeyTimes#{Key => NewRest}
+                  end,
+    {NewKeyTimes, AccTime}.
+
+update_depth(Depths, _, no_key) ->
     Depths;
-set_ts_and_depth(Depths, #tr{event = call, ts = TS}, Key, none) ->
-    Depths#{Key => {TS, 0}};
-set_ts_and_depth(Depths, #tr{event = call}, Key, {OrigTS, Depth}) ->
-    Depths#{Key => {OrigTS, Depth + 1}};
-set_ts_and_depth(Depths, #tr{event = Event}, Key, {OrigTS, Depth}) when ?is_return(Event), Depth > 0 ->
-    Depths#{Key => {OrigTS, Depth - 1}};
-set_ts_and_depth(Depths, #tr{event = Event}, Key, {_OrigTS, 0}) when ?is_return(Event) ->
-    maps:remove(Key, Depths).
-
-update_stat(Stat, LastTr, Tr, Key, TSDepth, Stack) ->
-    Stat1 = update_count(Tr, Key, Stat),
-    Stat2 = update_acc_time(TSDepth, Tr, Key, Stat1),
-    ParentKey = case Stack of
-                    [K | _] -> K;
-                    [] -> no_key
-                end,
-    update_own_time(LastTr, ParentKey, Tr, Key, Stat2).
-
-update_count(Tr, Key, Stat) ->
-    case count_key(Tr, Key) of
-        no_key ->
-            Stat;
-        KeyToUpdate ->
-            {Count, AccTime, OwnTime} = maps:get(KeyToUpdate, Stat, {0, 0, 0}),
-            Stat#{KeyToUpdate => {Count + 1, AccTime, OwnTime}}
+update_depth(Depths, #tr{event = call}, Key) ->
+    case Depths of
+        #{Key := Depth} -> Depths#{Key => Depth + 1};
+        _ -> Depths#{Key => 1}
+    end;
+update_depth(Depths, #tr{event = Event}, Key) when ?is_return(Event) ->
+    case Depths of
+        #{Key := 1} -> maps:remove(Key, Depths);
+        #{Key := Depth} -> Depths#{Key := Depth - 1}
     end.
 
-update_acc_time(TSDepth, Tr, Key, Stat) ->
-    case acc_time_key(TSDepth, Tr, Key) of
-        no_key ->
-            Stat;
-        KeyToUpdate ->
-            {Count, AccTime, OwnTime} = maps:get(KeyToUpdate, Stat, {0, 0, 0}),
-            {OrigTS, _Depth} = TSDepth,
-            NewAccTime = AccTime + Tr#tr.ts - OrigTS,
-            Stat#{KeyToUpdate => {Count, NewAccTime, OwnTime}}
+update_stat(Stat, Tr, Key, AccTime, OwnTime, {LastTr, Stack, KeyStates}, CountOpt) ->
+    Stat1 = add_current_time_delta(LastTr, Tr, Stack, KeyStates, Stat, CountOpt),
+    update_stat(Stat1, Tr, Key, AccTime, OwnTime, CountOpt).
+
+%% If unfinished calls are counted, update their time with the current delta
+add_current_time_delta(#tr{ts = LastTS}, #tr{ts = TS}, Stack, KeyTimes, Stat, CountOpt)
+  when CountOpt =:= all; CountOpt =:= incomplete ->
+    Delta = TS - LastTS,
+    Stat1 = maps:fold(fun(Key, _, Acc) -> update_acc_time(Key, Delta, Acc) end, Stat, KeyTimes),
+    case {CountOpt, Stack} of
+        {all, [no_key | _]} -> Stat1;
+        {all, [Key | _]} -> update_own_time(Key, Delta, Stat1);
+        {incomplete, [{Key, _} | _]} -> update_own_time(Key, Delta, Stat1);
+        _ -> Stat1
+    end;
+add_current_time_delta(_, _, _, _, Stat, _) ->
+    Stat.
+
+update_stat(Stat, _, no_key, _, _, _) ->
+    Stat;
+update_stat(Stat, Tr, Key, AccTime, OwnTime, CountOpt) ->
+    Stat1 = update_count(Tr, Key, Stat, CountOpt),
+    Stat2 = update_acc_time(Key, AccTime, Stat1),
+    Stat3 = update_own_time(Key, own_time_delta(Tr#tr.event, CountOpt, OwnTime), Stat2),
+    case Stat3 of
+        #{Key := {0, _, _}} -> maps:remove(Key, Stat3);
+        _ -> Stat3
     end.
 
-update_own_time(LastTr, ParentKey, Tr, Key, Stat) ->
-    case own_time_key(LastTr, ParentKey, Tr, Key) of
-        no_key ->
+matches_outcome(Event, CountOpt) ->
+    ?is_return(Event) andalso (CountOpt =:= complete orelse CountOpt =:= Event).
+
+update_count(Tr, Key, Stat, CountOpt) ->
+    case count_delta(Tr, CountOpt) of
+        0 ->
             Stat;
-        KeyToUpdate ->
-            {Count, AccTime, OwnTime} = maps:get(KeyToUpdate, Stat, {0, 0, 0}),
-            NewOwnTime = OwnTime + Tr#tr.ts - LastTr#tr.ts,
-            Stat#{KeyToUpdate => {Count, AccTime, NewOwnTime}}
+        Delta ->
+            {Count, AccTime, OwnTime} = maps:get(Key, Stat, {0, 0, 0}),
+            Stat#{Key => {Count + Delta, AccTime, OwnTime}}
     end.
 
-count_key(#tr{event = call}, Key)
-  when Key =/= no_key -> Key;
-count_key(#tr{}, _) -> no_key.
+update_acc_time(_, 0, Stat) ->
+    Stat;
+update_acc_time(Key, Delta, Stat) ->
+    {Count, AccTime, OwnTime} = maps:get(Key, Stat, {0, 0, 0}),
+    NewAccTime = AccTime + Delta,
+    Stat#{Key => {Count, NewAccTime, OwnTime}}.
 
-acc_time_key({_, 0}, #tr{event = Event}, Key)
-  when ?is_return(Event), Key =/= no_key -> Key;
-acc_time_key(_, #tr{}, _) -> no_key.
+update_own_time(_, 0, Stat) ->
+    Stat;
+update_own_time(Key, Delta, Stat) ->
+    {Count, AccTime, OwnTime} = maps:get(Key, Stat, {0, 0, 0}),
+    NewOwnTime = OwnTime + Delta,
+    Stat#{Key => {Count, AccTime, NewOwnTime}}.
 
-own_time_key(#tr{event = call}, PKey, #tr{}, _)
-  when PKey =/= no_key -> PKey;
-own_time_key(#tr{event = LEvent}, PKey, #tr{event = call}, _)
-  when ?is_return(LEvent), PKey =/= no_key -> PKey;
-own_time_key(_, _, #tr{event = Event}, Key)
-  when ?is_return(Event), Key =/= no_key -> Key;
-own_time_key(_, _, #tr{}, _) -> no_key.
+acc_time_delta(_, incomplete, Duration, _KeyTime, true) -> -Duration;
+acc_time_delta(_, incomplete, _Duration, _KeyTime, false) -> 0;
+acc_time_delta(Event, CountOpt, Duration, KeyTime, _Outermost) ->
+    case matches_outcome(Event, CountOpt) of
+        true -> Duration - KeyTime;
+        false -> 0
+    end.
+
+own_time_delta(call, _, _OwnTime) -> 0;
+own_time_delta(_, all, _OwnTime) -> 0;
+own_time_delta(_, incomplete, OwnTime) -> -OwnTime;
+own_time_delta(Event, CountOpt, OwnTime) ->
+    case matches_outcome(Event, CountOpt) of
+        true -> OwnTime;
+        false -> 0
+    end.
+
+count_delta(#tr{event = call}, CountOpt) when CountOpt =:= all; CountOpt =:= incomplete -> 1;
+count_delta(#tr{event = Event}, incomplete) when ?is_return(Event) -> -1;
+count_delta(#tr{event = Event}, complete) when ?is_return(Event) -> 1;
+count_delta(#tr{event = Event}, Event) when ?is_return(Event) -> 1;
+count_delta(#tr{}, _CountOpt) -> 0.
 
 %% Call tree statistics for redundancy check
 
