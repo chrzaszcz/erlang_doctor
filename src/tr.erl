@@ -1099,12 +1099,15 @@ sort_by_pos(own_time) -> 4.
 call_stat_step(_KeyF, #tr{event = Event}, State) when ?is_msg(Event) ->
     State;
 call_stat_step(KeyF, Tr = #tr{pid = Pid}, {ProcessStates, Stat, CountOpt}) ->
-    {LastTr, Stack, KeyTimes} = maps:get(Pid, ProcessStates, {no_tr, [], #{}}),
-    Stat1 = update_observed_time(LastTr, Tr, Stack, KeyTimes, Stat, CountOpt),
+    {LastTr, Stack, KeyStates} = maps:get(Pid, ProcessStates, {no_tr, [], #{}}),
+    Stat1 = add_current_time_delta(LastTr, Tr, Stack, KeyStates, Stat, CountOpt),
     Key = get_key(KeyF, Stack, Tr),
     {NewStack, OwnTime} = update_stack(Key, Stack, Tr, LastTr),
-    {NewKeyTimes, AccTime} = update_key_times(KeyTimes, Tr, Key, CountOpt),
-    ProcessStates1 = ProcessStates#{Pid => {Tr, NewStack, NewKeyTimes}},
+    {NewKeyStates, AccTime} = case CountOpt of
+                                 all -> {update_depth(KeyStates, Tr, Key), 0};
+                                 _ -> update_key_times(KeyStates, Tr, Key, CountOpt)
+                             end,
+    ProcessStates1 = ProcessStates#{Pid => {Tr, NewStack, NewKeyStates}},
     Stat2 = update_stat(Stat1, Tr, Key, AccTime, OwnTime, CountOpt),
     {ProcessStates1, Stat2, CountOpt}.
 
@@ -1138,20 +1141,20 @@ update_stack(_Key, [{_, OwnTime} | Rest], #tr{event = Event, ts = TS}, #tr{ts = 
 update_stack(_, [], #tr{event = Event}, _) when ?is_return(Event) ->
     {[], 0}.
 
-%% Each key has a stack of {StartTS, AccTime} entries for this process.
-%% AccTime is the duration already reported for matching descendants of the same key.
+%% Each key has a stack of {StartTS, KeyTime} entries for this process.
+%% KeyTime is the duration already reported for matching descendants of the same key.
 update_key_times(KeyTimes, _, no_key, _) ->
     {KeyTimes, 0};
 update_key_times(KeyTimes, #tr{event = call, ts = TS}, Key, _) ->
     Entries = maps:get(Key, KeyTimes, []),
     {KeyTimes#{Key => [{TS, 0} | Entries]}, 0};
 update_key_times(KeyTimes, #tr{event = Event, ts = TS}, Key, CountOpt) when ?is_return(Event) ->
-    [{StartTS, AccTime} | Rest] = maps:get(Key, KeyTimes),
+    [{StartTS, KeyTime} | Rest] = maps:get(Key, KeyTimes),
     Duration = TS - StartTS,
-    Delta = acc_time_delta(Event, CountOpt, Duration, AccTime, Rest =:= []),
+    AccTime = acc_time_delta(Event, CountOpt, Duration, KeyTime, Rest =:= []),
     NewRest = case Rest of
-                  [{ParentTS, ParentAcc} | Tail] when CountOpt =/= all, CountOpt =/= incomplete ->
-                      [{ParentTS, ParentAcc + AccTime + Delta} | Tail];
+                  [{ParentTS, ParentKT} | Tail] when CountOpt =/= incomplete ->
+                      [{ParentTS, ParentKT + KeyTime + AccTime} | Tail];
                   _ -> Rest
               end,
     NewKeyTimes = case NewRest of
@@ -1160,8 +1163,21 @@ update_key_times(KeyTimes, #tr{event = Event, ts = TS}, Key, CountOpt) when ?is_
                   end,
     {NewKeyTimes, AccTime}.
 
-%% Charge the interval to every active key once, and only to the top call as own time.
-update_observed_time(#tr{ts = LastTS}, #tr{ts = TS}, Stack, KeyTimes, Stat, CountOpt)
+update_depth(Depths, _, no_key) ->
+    Depths;
+update_depth(Depths, #tr{event = call}, Key) ->
+    case Depths of
+        #{Key := Depth} -> Depths#{Key => Depth + 1};
+        _ -> Depths#{Key => 1}
+    end;
+update_depth(Depths, #tr{event = Event}, Key) when ?is_return(Event) ->
+    case Depths of
+        #{Key := 1} -> maps:remove(Key, Depths);
+        #{Key := Depth} -> Depths#{Key := Depth - 1}
+    end.
+
+%% If unfinished calls are counted, update their time with the current delta
+add_current_time_delta(#tr{ts = LastTS}, #tr{ts = TS}, Stack, KeyTimes, Stat, CountOpt)
   when CountOpt =:= all; CountOpt =:= incomplete ->
     Delta = TS - LastTS,
     Stat1 = maps:fold(fun(Key, _, Acc) -> update_acc_time(Key, Delta, Acc) end, Stat, KeyTimes),
@@ -1169,7 +1185,7 @@ update_observed_time(#tr{ts = LastTS}, #tr{ts = TS}, Stack, KeyTimes, Stat, Coun
         [{Key, _} | _] -> update_own_time(Key, Delta, Stat1);
         _ -> Stat1
     end;
-update_observed_time(_, _, _, _, Stat, _) ->
+add_current_time_delta(_, _, _, _, Stat, _) ->
     Stat.
 
 update_stat(Stat, _, no_key, _, _, _) ->
@@ -1209,12 +1225,12 @@ update_own_time(Key, Delta, Stat) ->
     NewOwnTime = OwnTime + Delta,
     Stat#{Key => {Count, AccTime, NewOwnTime}}.
 
-acc_time_delta(_, all, _Duration, _AccTime, _Outermost) -> 0;
-acc_time_delta(_, incomplete, Duration, _AccTime, true) -> -Duration;
-acc_time_delta(_, incomplete, _Duration, _AccTime, false) -> 0;
-acc_time_delta(Event, CountOpt, Duration, AccTime, _Outermost) ->
+acc_time_delta(_, all, _Duration, _KeyTime, _Outermost) -> 0;
+acc_time_delta(_, incomplete, Duration, _KeyTime, true) -> -Duration;
+acc_time_delta(_, incomplete, _Duration, _KeyTime, false) -> 0;
+acc_time_delta(Event, CountOpt, Duration, KeyTime, _Outermost) ->
     case matches_outcome(Event, CountOpt) of
-        true -> Duration - AccTime;
+        true -> Duration - KeyTime;
         false -> 0
     end.
 
