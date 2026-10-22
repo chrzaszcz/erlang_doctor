@@ -1099,17 +1099,24 @@ sort_by_pos(own_time) -> 4.
 call_stat_step(_KeyF, #tr{event = Event}, State) when ?is_msg(Event) ->
     State;
 call_stat_step(KeyF, Tr = #tr{pid = Pid}, {ProcessStates, Stat, CountOpt}) ->
-    {LastTr, Stack, KeyStates} = maps:get(Pid, ProcessStates, {no_tr, [], #{}}),
-    Stat1 = add_current_time_delta(LastTr, Tr, Stack, KeyStates, Stat, CountOpt),
-    Key = get_key(KeyF, Stack, Tr),
-    {NewStack, OwnTime} = update_stack(Key, Stack, Tr, LastTr),
+    PidState = {LastTr, Stack, KeyStates} = maps:get(Pid, ProcessStates, {no_tr, [], #{}}),
+    Key = get_key(KeyF, Stack, Tr, CountOpt),
+    {NewStack, OwnTime} = case CountOpt of
+                             all -> {update_stack(Key, Stack, Tr), 0};
+                             _ -> update_stack(Key, Stack, Tr, LastTr)
+                         end,
     {NewKeyStates, AccTime} = case CountOpt of
                                  all -> {update_depth(KeyStates, Tr, Key), 0};
                                  _ -> update_key_times(KeyStates, Tr, Key, CountOpt)
                              end,
     ProcessStates1 = ProcessStates#{Pid => {Tr, NewStack, NewKeyStates}},
-    Stat2 = update_stat(Stat1, Tr, Key, AccTime, OwnTime, CountOpt),
-    {ProcessStates1, Stat2, CountOpt}.
+    Stat1 = update_stat(Stat, Tr, Key, AccTime, OwnTime, PidState, CountOpt),
+    {ProcessStates1, Stat1, CountOpt}.
+
+get_key(_KeyF, [Key | _], #tr{event = Event}, all) when ?is_return(Event) ->
+    Key;
+get_key(KeyF, Stack, Tr, _CountOpt) ->
+    get_key(KeyF, Stack, Tr).
 
 get_key(KeyF, _Stack, T = #tr{event = call}) ->
     try KeyF(T) catch _:_ -> no_key end;
@@ -1121,6 +1128,13 @@ get_key(_, [], #tr{event = Event, mfa = MFA}) when ?is_return(Event) ->
     {M, F, A} = mfarity(MFA),
     logger:warning("Found a return trace from ~p:~p/~p without a call trace", [M, F, A]),
     no_key.
+
+update_stack(Key, Stack, #tr{event = call}) ->
+    [Key | Stack];
+update_stack(_, [_ | Rest], #tr{event = Event}) when ?is_return(Event) ->
+    Rest;
+update_stack(_, [], #tr{event = Event}) when ?is_return(Event) ->
+    [].
 
 update_stack(Key, Stack, T = #tr{event = call}, LastTr) ->
     NewStack = case Stack of
@@ -1176,13 +1190,19 @@ update_depth(Depths, #tr{event = Event}, Key) when ?is_return(Event) ->
         #{Key := Depth} -> Depths#{Key := Depth - 1}
     end.
 
+update_stat(Stat, Tr, Key, AccTime, OwnTime, {LastTr, Stack, KeyStates}, CountOpt) ->
+    Stat1 = add_current_time_delta(LastTr, Tr, Stack, KeyStates, Stat, CountOpt),
+    update_stat(Stat1, Tr, Key, AccTime, OwnTime, CountOpt).
+
 %% If unfinished calls are counted, update their time with the current delta
 add_current_time_delta(#tr{ts = LastTS}, #tr{ts = TS}, Stack, KeyTimes, Stat, CountOpt)
   when CountOpt =:= all; CountOpt =:= incomplete ->
     Delta = TS - LastTS,
     Stat1 = maps:fold(fun(Key, _, Acc) -> update_acc_time(Key, Delta, Acc) end, Stat, KeyTimes),
-    case Stack of
-        [{Key, _} | _] -> update_own_time(Key, Delta, Stat1);
+    case {CountOpt, Stack} of
+        {all, [no_key | _]} -> Stat1;
+        {all, [Key | _]} -> update_own_time(Key, Delta, Stat1);
+        {incomplete, [{Key, _} | _]} -> update_own_time(Key, Delta, Stat1);
         _ -> Stat1
     end;
 add_current_time_delta(_, _, _, _, Stat, _) ->
@@ -1225,7 +1245,6 @@ update_own_time(Key, Delta, Stat) ->
     NewOwnTime = OwnTime + Delta,
     Stat#{Key => {Count, AccTime, NewOwnTime}}.
 
-acc_time_delta(_, all, _Duration, _KeyTime, _Outermost) -> 0;
 acc_time_delta(_, incomplete, Duration, _KeyTime, true) -> -Duration;
 acc_time_delta(_, incomplete, _Duration, _KeyTime, false) -> 0;
 acc_time_delta(Event, CountOpt, Duration, KeyTime, _Outermost) ->
