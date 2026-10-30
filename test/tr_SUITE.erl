@@ -658,11 +658,11 @@ acc_and_own_for_recursion(_Config) ->
     ?assertEqual(Acc1, Own1 + Acc0),
 
     %% Test options
-    ?assertEqual(Stat, tr:sorted_call_stat(KeyF, #{count => all})),
-    ?assertEqual(Stat, tr:sorted_call_stat(KeyF, #{count => complete})),
-    ?assertEqual(Stat, tr:sorted_call_stat(KeyF, #{count => return})),
-    ?assertEqual([], tr:sorted_call_stat(KeyF, #{count => incomplete})),
-    ?assertEqual([], tr:sorted_call_stat(KeyF, #{count => exception})).
+    ?assertEqual(Stat, tr:sorted_call_stat(KeyF, #{filter => all})),
+    ?assertEqual(Stat, tr:sorted_call_stat(KeyF, #{filter => complete})),
+    ?assertEqual(Stat, tr:sorted_call_stat(KeyF, #{filter => return})),
+    ?assertEqual([], tr:sorted_call_stat(KeyF, #{filter => incomplete})),
+    ?assertEqual([], tr:sorted_call_stat(KeyF, #{filter => exception})).
 
 acc_and_own_for_recursion_with_exception(_Config) ->
     tr:trace([{?MODULE, bad_factorial, 1}]),
@@ -740,11 +740,11 @@ call_without_return(_Config) ->
     ?assertEqual([{{wait_and_reply, [Self]}, 1, 0, 0}], Stat), % time is zero
 
     %% Test options
-    ?assertEqual(Stat, tr:sorted_call_stat(KeyF, #{count => all})),
-    ?assertEqual(Stat, tr:sorted_call_stat(KeyF, #{count => incomplete})),
-    ?assertEqual([], tr:sorted_call_stat(KeyF, #{count => complete})),
-    ?assertEqual([], tr:sorted_call_stat(KeyF, #{count => return})),
-    ?assertEqual([], tr:sorted_call_stat(KeyF, #{count => exception})).
+    ?assertEqual(Stat, tr:sorted_call_stat(KeyF, #{filter => all})),
+    ?assertEqual(Stat, tr:sorted_call_stat(KeyF, #{filter => incomplete})),
+    ?assertEqual([], tr:sorted_call_stat(KeyF, #{filter => complete})),
+    ?assertEqual([], tr:sorted_call_stat(KeyF, #{filter => return})),
+    ?assertEqual([], tr:sorted_call_stat(KeyF, #{filter => exception})).
 
 return_without_call(_Config) ->
     P1 = spawn_link(?MODULE, wait_and_reply, [self()]),
