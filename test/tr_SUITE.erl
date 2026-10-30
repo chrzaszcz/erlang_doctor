@@ -661,7 +661,6 @@ acc_and_own_for_recursion(_Config) ->
     ?assertEqual(Stat, tr:sorted_call_stat(KeyF, #{filter => all})),
     ?assertEqual(Stat, tr:sorted_call_stat(KeyF, #{filter => complete})),
     ?assertEqual(Stat, tr:sorted_call_stat(KeyF, #{filter => return})),
-    ?assertEqual([], tr:sorted_call_stat(KeyF, #{filter => incomplete})),
     ?assertEqual([], tr:sorted_call_stat(KeyF, #{filter => exception})).
 
 acc_and_own_for_recursion_with_exception(_Config) ->
@@ -741,7 +740,6 @@ call_without_return(_Config) ->
 
     %% Test options
     ?assertEqual(Stat, tr:sorted_call_stat(KeyF, #{filter => all})),
-    ?assertEqual(Stat, tr:sorted_call_stat(KeyF, #{filter => incomplete})),
     ?assertEqual([], tr:sorted_call_stat(KeyF, #{filter => complete})),
     ?assertEqual([], tr:sorted_call_stat(KeyF, #{filter => return})),
     ?assertEqual([], tr:sorted_call_stat(KeyF, #{filter => exception})).
