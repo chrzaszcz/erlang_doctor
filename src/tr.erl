@@ -1100,7 +1100,7 @@ call_stat_step(_KeyF, #tr{event = Event}, State) when ?is_msg(Event) ->
     State;
 call_stat_step(KeyF, Tr = #tr{pid = Pid}, {ProcessStates, Stat, all}) ->
     PidState = {_LastTr, Stack, Depths} = maps:get(Pid, ProcessStates, {no_tr, [], #{}}),
-    Key = get_key(KeyF, Stack, Tr, all),
+    Key = get_key(KeyF, Stack, Tr),
     NewStack = update_stack(Key, Stack, Tr),
     NewDepths = update_depth(Depths, Tr, Key),
     ProcessStates1 = ProcessStates#{Pid => {Tr, NewStack, NewDepths}},
@@ -1108,23 +1108,18 @@ call_stat_step(KeyF, Tr = #tr{pid = Pid}, {ProcessStates, Stat, all}) ->
     {ProcessStates1, Stat1, all};
 call_stat_step(KeyF, Tr = #tr{pid = Pid}, {ProcessStates, Stat, Filter}) ->
     {LastTr, Stack, KeyTimes} = maps:get(Pid, ProcessStates, {no_tr, [], #{}}),
-    Key = get_key(KeyF, Stack, Tr, Filter),
+    Key = get_key_filtered(KeyF, Stack, Tr),
     {NewStack, OwnTime} = update_stack(Key, Stack, Tr, LastTr),
     {NewKeyTimes, AccTime} = update_key_times(KeyTimes, Tr, Key, Filter),
     ProcessStates1 = ProcessStates#{Pid => {Tr, NewStack, NewKeyTimes}},
     Stat1 = update_stat(Stat, Tr, Key, AccTime, OwnTime, Filter),
     {ProcessStates1, Stat1, Filter}.
 
-get_key(_KeyF, [Key | _], #tr{event = Event}, all) when ?is_return(Event) ->
-    Key;
-get_key(KeyF, Stack, Tr, _Filter) ->
-    get_key(KeyF, Stack, Tr).
+%% Call stat operations: all
 
 get_key(KeyF, _Stack, T = #tr{event = call}) ->
     try KeyF(T) catch _:_ -> no_key end;
-get_key(_KeyF, [no_key | _], #tr{event = Event}) when ?is_return(Event) ->
-    no_key;
-get_key(_KeyF, [{Key, _OwnTime} | _], #tr{event = Event}) when ?is_return(Event) ->
+get_key(_KeyF, [Key | _], #tr{event = Event}) when ?is_return(Event) ->
     Key;
 get_key(_, [], #tr{event = Event, mfa = MFA}) when ?is_return(Event) ->
     {M, F, A} = mfarity(MFA),
@@ -1137,6 +1132,51 @@ update_stack(_, [_ | Rest], #tr{event = Event}) when ?is_return(Event) ->
     Rest;
 update_stack(_, [], #tr{event = Event}) when ?is_return(Event) ->
     [].
+
+update_depth(Depths, _, no_key) ->
+    Depths;
+update_depth(Depths, #tr{event = call}, Key) ->
+    case Depths of
+        #{Key := Depth} -> Depths#{Key => Depth + 1};
+        _ -> Depths#{Key => 1}
+    end;
+update_depth(Depths, #tr{event = Event}, Key) when ?is_return(Event) ->
+    case Depths of
+        #{Key := 1} -> maps:remove(Key, Depths);
+        #{Key := Depth} -> Depths#{Key := Depth - 1}
+    end.
+
+update_stat(Stat, Tr, Key, {LastTr, Stack, Depths}) ->
+    Stat1 = add_current_time_delta(LastTr, Tr, Stack, Depths, Stat),
+    case Tr#tr.event =:= call andalso Key =/= no_key of
+        true -> update_count(Key, Stat1);
+        false -> Stat1
+    end.
+
+%% For all calls, update their time with the current delta
+add_current_time_delta(#tr{ts = LastTS}, #tr{ts = TS}, Stack, Depths, Stat) ->
+    Delta = TS - LastTS,
+    Stat1 = maps:fold(fun(Key, _, Acc) -> update_acc_time(Key, Delta, Acc) end, Stat, Depths),
+    case Stack of
+        [no_key | _] -> Stat1;
+        [Key | _] -> update_own_time(Key, Delta, Stat1);
+        _ -> Stat1
+    end;
+add_current_time_delta(_, _, _, _, Stat) ->
+    Stat.
+
+%% Call stat operations: filtered
+
+get_key_filtered(KeyF, _Stack, T = #tr{event = call}) ->
+    try KeyF(T) catch _:_ -> no_key end;
+get_key_filtered(_KeyF, [no_key | _], #tr{event = Event}) when ?is_return(Event) ->
+    no_key;
+get_key_filtered(_KeyF, [{Key, _OwnTime} | _], #tr{event = Event}) when ?is_return(Event) ->
+    Key;
+get_key_filtered(_, [], #tr{event = Event, mfa = MFA}) when ?is_return(Event) ->
+    {M, F, A} = mfarity(MFA),
+    logger:warning("Found a return trace from ~p:~p/~p without a call trace", [M, F, A]),
+    no_key.
 
 update_stack(Key, Stack, T = #tr{event = call}, LastTr) ->
     NewStack = case Stack of
@@ -1179,44 +1219,12 @@ update_key_times(KeyTimes, #tr{event = Event, ts = TS}, Key, Filter) when ?is_re
                   end,
     {NewKeyTimes, AccTimeDelta}.
 
-update_depth(Depths, _, no_key) ->
-    Depths;
-update_depth(Depths, #tr{event = call}, Key) ->
-    case Depths of
-        #{Key := Depth} -> Depths#{Key => Depth + 1};
-        _ -> Depths#{Key => 1}
-    end;
-update_depth(Depths, #tr{event = Event}, Key) when ?is_return(Event) ->
-    case Depths of
-        #{Key := 1} -> maps:remove(Key, Depths);
-        #{Key := Depth} -> Depths#{Key := Depth - 1}
-    end.
-
-update_stat(Stat, Tr, Key, {LastTr, Stack, Depths}) ->
-    Stat1 = add_current_time_delta(LastTr, Tr, Stack, Depths, Stat),
-    case Tr#tr.event =:= call andalso Key =/= no_key of
-        true -> update_count(Key, Stat1);
-        false -> Stat1
-    end.
-
 update_stat(Stat, #tr{event = Event}, Key, AccTime, OwnTime, Filter)
   when Key =/= no_key, ?is_return(Event), Filter =:= complete orelse Filter =:= Event ->
     Stat1 = update_acc_time(Key, AccTime, Stat),
     Stat2 = update_own_time(Key, OwnTime, Stat1),
     update_count(Key, Stat2);
 update_stat(Stat, _Tr, _Key, _AccTime, _OwnTime, _Filter) ->
-    Stat.
-
-%% For all calls, update their time with the current delta
-add_current_time_delta(#tr{ts = LastTS}, #tr{ts = TS}, Stack, Depths, Stat) ->
-    Delta = TS - LastTS,
-    Stat1 = maps:fold(fun(Key, _, Acc) -> update_acc_time(Key, Delta, Acc) end, Stat, Depths),
-    case Stack of
-        [no_key | _] -> Stat1;
-        [Key | _] -> update_own_time(Key, Delta, Stat1);
-        _ -> Stat1
-    end;
-add_current_time_delta(_, _, _, _, Stat) ->
     Stat.
 
 update_count(Key, Stat) ->
