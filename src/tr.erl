@@ -1098,19 +1098,21 @@ sort_by_pos(own_time) -> 4.
 
 call_stat_step(_KeyF, #tr{event = Event}, State) when ?is_msg(Event) ->
     State;
+call_stat_step(KeyF, Tr = #tr{pid = Pid}, {ProcessStates, Stat, all}) ->
+    PidState = {_LastTr, Stack, Depths} = maps:get(Pid, ProcessStates, {no_tr, [], #{}}),
+    Key = get_key(KeyF, Stack, Tr, all),
+    NewStack = update_stack(Key, Stack, Tr),
+    NewDepths = update_depth(Depths, Tr, Key),
+    ProcessStates1 = ProcessStates#{Pid => {Tr, NewStack, NewDepths}},
+    Stat1 = update_stat(Stat, Tr, Key, PidState),
+    {ProcessStates1, Stat1, all};
 call_stat_step(KeyF, Tr = #tr{pid = Pid}, {ProcessStates, Stat, Filter}) ->
-    PidState = {LastTr, Stack, KeyStates} = maps:get(Pid, ProcessStates, {no_tr, [], #{}}),
+    {LastTr, Stack, KeyTimes} = maps:get(Pid, ProcessStates, {no_tr, [], #{}}),
     Key = get_key(KeyF, Stack, Tr, Filter),
-    {NewStack, OwnTime} = case Filter of
-                             all -> {update_stack(Key, Stack, Tr), 0};
-                             _ -> update_stack(Key, Stack, Tr, LastTr)
-                         end,
-    {NewKeyStates, AccTime} = case Filter of
-                                 all -> {update_depth(KeyStates, Tr, Key), 0};
-                                 _ -> update_key_times(KeyStates, Tr, Key, Filter)
-                             end,
-    ProcessStates1 = ProcessStates#{Pid => {Tr, NewStack, NewKeyStates}},
-    Stat1 = update_stat(Stat, Tr, Key, AccTime, OwnTime, PidState, Filter),
+    {NewStack, OwnTime} = update_stack(Key, Stack, Tr, LastTr),
+    {NewKeyTimes, AccTime} = update_key_times(KeyTimes, Tr, Key, Filter),
+    ProcessStates1 = ProcessStates#{Pid => {Tr, NewStack, NewKeyTimes}},
+    Stat1 = update_stat(Stat, Tr, Key, AccTime, OwnTime, Filter),
     {ProcessStates1, Stat1, Filter}.
 
 get_key(_KeyF, [Key | _], #tr{event = Event}, all) when ?is_return(Event) ->
@@ -1190,24 +1192,25 @@ update_depth(Depths, #tr{event = Event}, Key) when ?is_return(Event) ->
         #{Key := Depth} -> Depths#{Key := Depth - 1}
     end.
 
-update_stat(Stat, Tr, Key, _AccTime, _OwnTime, {LastTr, Stack, KeyStates}, all) ->
-    Stat1 = add_current_time_delta(LastTr, Tr, Stack, KeyStates, Stat),
+update_stat(Stat, Tr, Key, {LastTr, Stack, Depths}) ->
+    Stat1 = add_current_time_delta(LastTr, Tr, Stack, Depths, Stat),
     case Tr#tr.event =:= call andalso Key =/= no_key of
         true -> update_count(Key, Stat1);
         false -> Stat1
-    end;
-update_stat(Stat, #tr{event = Event}, Key, AccTime, OwnTime, _PidState, Filter)
+    end.
+
+update_stat(Stat, #tr{event = Event}, Key, AccTime, OwnTime, Filter)
   when Key =/= no_key, ?is_return(Event), Filter =:= complete orelse Filter =:= Event ->
     Stat1 = update_acc_time(Key, AccTime, Stat),
     Stat2 = update_own_time(Key, OwnTime, Stat1),
     update_count(Key, Stat2);
-update_stat(Stat, _Tr, _Key, _AccTime, _OwnTime, _PidState, _Filter) ->
+update_stat(Stat, _Tr, _Key, _AccTime, _OwnTime, _Filter) ->
     Stat.
 
 %% For all calls, update their time with the current delta
-add_current_time_delta(#tr{ts = LastTS}, #tr{ts = TS}, Stack, KeyTimes, Stat) ->
+add_current_time_delta(#tr{ts = LastTS}, #tr{ts = TS}, Stack, Depths, Stat) ->
     Delta = TS - LastTS,
-    Stat1 = maps:fold(fun(Key, _, Acc) -> update_acc_time(Key, Delta, Acc) end, Stat, KeyTimes),
+    Stat1 = maps:fold(fun(Key, _, Acc) -> update_acc_time(Key, Delta, Acc) end, Stat, Depths),
     case Stack of
         [no_key | _] -> Stat1;
         [Key | _] -> update_own_time(Key, Delta, Stat1);
