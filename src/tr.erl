@@ -1190,12 +1190,22 @@ update_depth(Depths, #tr{event = Event}, Key) when ?is_return(Event) ->
         #{Key := Depth} -> Depths#{Key := Depth - 1}
     end.
 
-update_stat(Stat, Tr, Key, AccTime, OwnTime, {LastTr, Stack, KeyStates}, Filter) ->
-    Stat1 = add_current_time_delta(LastTr, Tr, Stack, KeyStates, Stat, Filter),
-    update_stat(Stat1, Tr, Key, AccTime, OwnTime, Filter).
+update_stat(Stat, Tr, Key, _AccTime, _OwnTime, {LastTr, Stack, KeyStates}, all) ->
+    Stat1 = add_current_time_delta(LastTr, Tr, Stack, KeyStates, Stat),
+    case Tr#tr.event =:= call andalso Key =/= no_key of
+        true -> update_count(Key, Stat1);
+        false -> Stat1
+    end;
+update_stat(Stat, #tr{event = Event}, Key, AccTime, OwnTime, _PidState, Filter)
+  when Key =/= no_key, ?is_return(Event), Filter =:= complete orelse Filter =:= Event ->
+    Stat1 = update_acc_time(Key, AccTime, Stat),
+    Stat2 = update_own_time(Key, OwnTime, Stat1),
+    update_count(Key, Stat2);
+update_stat(Stat, _Tr, _Key, _AccTime, _OwnTime, _PidState, _Filter) ->
+    Stat.
 
 %% For all calls, update their time with the current delta
-add_current_time_delta(#tr{ts = LastTS}, #tr{ts = TS}, Stack, KeyTimes, Stat, all) ->
+add_current_time_delta(#tr{ts = LastTS}, #tr{ts = TS}, Stack, KeyTimes, Stat) ->
     Delta = TS - LastTS,
     Stat1 = maps:fold(fun(Key, _, Acc) -> update_acc_time(Key, Delta, Acc) end, Stat, KeyTimes),
     case Stack of
@@ -1203,42 +1213,24 @@ add_current_time_delta(#tr{ts = LastTS}, #tr{ts = TS}, Stack, KeyTimes, Stat, al
         [Key | _] -> update_own_time(Key, Delta, Stat1);
         _ -> Stat1
     end;
-add_current_time_delta(_, _, _, _, Stat, _) ->
+add_current_time_delta(_, _, _, _, Stat) ->
     Stat.
 
-update_stat(Stat, _, no_key, _, _, _) ->
-    Stat;
-update_stat(Stat, Tr = #tr{event = Event}, Key, AccTime, OwnTime, Filter) ->
-    Stat1 = update_count(Tr, Key, Stat, Filter),
-    Stat2 = update_acc_time(Key, AccTime, Stat1),
-    case ?is_return(Event)
-        andalso Filter =/= all
-        andalso (Filter =:= complete orelse Filter =:= Event) of
-        true -> update_own_time(Key, OwnTime, Stat2);
-        false -> Stat2
-    end.
-
-update_count(#tr{event = Event}, Key, Stat, Filter)
-  when Event =:= call, Filter =:= all;
-       ?is_return(Event), Filter =:= complete orelse Filter =:= Event ->
+update_count(Key, Stat) ->
     {Count, AccTime, OwnTime} = maps:get(Key, Stat, {0, 0, 0}),
-    Stat#{Key => {Count + 1, AccTime, OwnTime}};
-update_count(_Tr, _Key, Stat, _Filter) ->
-    Stat.
+    Stat#{Key => {Count + 1, AccTime, OwnTime}}.
 
 update_acc_time(_, 0, Stat) ->
     Stat;
 update_acc_time(Key, Delta, Stat) ->
     {Count, AccTime, OwnTime} = maps:get(Key, Stat, {0, 0, 0}),
-    NewAccTime = AccTime + Delta,
-    Stat#{Key => {Count, NewAccTime, OwnTime}}.
+    Stat#{Key => {Count, AccTime + Delta, OwnTime}}.
 
 update_own_time(_, 0, Stat) ->
     Stat;
 update_own_time(Key, Delta, Stat) ->
     {Count, AccTime, OwnTime} = maps:get(Key, Stat, {0, 0, 0}),
-    NewOwnTime = OwnTime + Delta,
-    Stat#{Key => {Count, AccTime, NewOwnTime}}.
+    Stat#{Key => {Count, AccTime, OwnTime + Delta}}.
 
 %% Call tree statistics for redundancy check
 
